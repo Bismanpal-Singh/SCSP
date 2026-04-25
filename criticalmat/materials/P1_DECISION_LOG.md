@@ -68,10 +68,38 @@ Goal for P1 (Hours 0-3): deliver working Materials Project retrieval, supply-cha
 
 ### 9) Two-stage virtual screening (wide fetch, narrow return)
 
-- **Decision:** `get_candidates` requests up to **200** Materials Project summary rows by default (`mp_screen_fetch_limit` in `target_props`, hard cap 500), applies supply-chain enrichment, runs `score_candidate` on **each** row as a preliminary rank, then returns only the **top `limit`** (default 50) to the loop.
+- **Decision:** `get_candidates` requests up to **100** Materials Project summary rows by default (`mp_screen_fetch_limit` in `target_props`, hard cap 500), applies supply-chain enrichment, runs `score_candidate` on **each** row as a preliminary rank, then returns only the **top `limit`** (default 50) to the loop.
 - **Why:** Aligns with the brief (“screen many candidates in seconds”) and avoids returning an arbitrary first page of MP results when better candidates exist in the same query window.
 - **Impact:** More local scoring work per call (up to fetch size). Tunable via `target_props["mp_screen_fetch_limit"]` without changing function signatures.
 - **Override:** Lower the fetch limit during dev to reduce latency; raise (still capped at 500) for more aggressive screening.
+
+### 10) Add viability/safety metadata (soft mode)
+
+- **Decision:** Keep candidates in the result set but annotate them with realism/safety flags instead of hard dropping:
+  - `is_radioactive`
+  - `is_solid_likely`
+  - `is_practical`
+- **Why:** Preserve optionality for downstream decision logic (P3/P2 may choose when/how to filter).
+- **Impact:** More flexible orchestration while still exposing risk/safety signals explicitly.
+
+### 11) Apply `target_props` directly in ranking metadata
+
+- **Decision:** Use `target_props` in scoring/practicality metadata (not hard elimination), especially:
+  - `max_stability_above_hull`
+  - `min_magnetic_moment` for magnet tasks
+  - `mp_screen_fetch_limit`
+- **Why:** Keep retrieval broad while still encoding spec-aware quality signals.
+- **Impact:** Better alignment between parsed hypothesis and ranked/annotated candidate pool.
+
+### 12) Add magnet-family diversity and realism flags
+
+- **Decision:** Tag candidate families (`fe_n`, `mn_al`, `ferrite`, `fe_co`, etc.), diversify returns across families, and add deterministic flags:
+  - `is_radioactive`
+  - `is_solid_likely`
+  - `is_practical`
+  - `family_tag`
+- **Why:** Prevent near-identical outputs and improve explainability for P2/P3 reasoning.
+- **Impact:** More varied, interpretable shortlists with explicit safety/practicality metadata.
 
 ## Validation Evidence
 
