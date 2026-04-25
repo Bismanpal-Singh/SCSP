@@ -6,7 +6,7 @@ import argparse
 
 from dotenv import load_dotenv
 
-from .loop import run_agent
+from .core.loop import run_agent
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -14,8 +14,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--hypothesis",
         type=str,
-        default="Find a permanent magnet for missile guidance systems without neodymium.",
-        help="Initial plain-English hypothesis.",
+        default=None,
+        help="Initial plain-English hypothesis. If omitted, prompt interactively.",
     )
     parser.add_argument(
         "--max-iterations",
@@ -31,7 +31,13 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    result = run_agent(args.hypothesis, max_iterations=args.max_iterations)
+    hypothesis = args.hypothesis
+    if not hypothesis:
+        hypothesis = input("Enter hypothesis: ").strip()
+    if not hypothesis:
+        hypothesis = "Find a permanent magnet for missile guidance systems without neodymium."
+
+    result = run_agent(hypothesis, max_iterations=args.max_iterations)
     best = result.get("best_candidate", {})
 
     print("\n=== Final Result ===")
