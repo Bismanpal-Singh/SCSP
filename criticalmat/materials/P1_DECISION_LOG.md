@@ -66,6 +66,13 @@ Goal for P1 (Hours 0-3): deliver working Materials Project retrieval, supply-cha
 - **Why:** Demo reliability should not depend on network/API latency.
 - **Impact:** Enables fast/consistent demo path.
 
+### 9) Two-stage virtual screening (wide fetch, narrow return)
+
+- **Decision:** `get_candidates` requests up to **200** Materials Project summary rows by default (`mp_screen_fetch_limit` in `target_props`, hard cap 500), applies supply-chain enrichment, runs `score_candidate` on **each** row as a preliminary rank, then returns only the **top `limit`** (default 50) to the loop.
+- **Why:** Aligns with the brief (“screen many candidates in seconds”) and avoids returning an arbitrary first page of MP results when better candidates exist in the same query window.
+- **Impact:** More local scoring work per call (up to fetch size). Tunable via `target_props["mp_screen_fetch_limit"]` without changing function signatures.
+- **Override:** Lower the fetch limit during dev to reduce latency; raise (still capped at 500) for more aggressive screening.
+
 ## Validation Evidence
 
 - `get_candidates(...)` live run returned non-zero candidates.
@@ -79,6 +86,10 @@ Goal for P1 (Hours 0-3): deliver working Materials Project retrieval, supply-cha
 - Add source-attributed per-element risk provenance in runtime payload.
 
 These are good post-MVP improvements once integration is stable.
+
+## Beyond MP: reaction-level “experiments” (optional)
+
+Materials Project answers **bulk equilibrium materials** (phases, hull, magnetization proxies). It does **not** simulate “what if I mix A + B under these reaction conditions” unless you add another layer (e.g. **Open Reaction Database** for published reaction outcomes, or explicit thermochemistry / phase-diagram tools). That would be a separate P1 extension or a cross-team feature: ORD for reaction feasibility/conditions, MP for resulting solid phases and properties.
 
 ## Future Upgrade Path (Post-Hackathon or Hour 5+)
 

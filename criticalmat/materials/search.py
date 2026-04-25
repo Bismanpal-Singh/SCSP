@@ -11,6 +11,12 @@ from dotenv import load_dotenv
 from mp_api.client import MPRester
 import requests
 
+from criticalmat.materials.scorer import score_candidate
+
+# Two-stage "virtual screening": fetch many MP summaries, rank locally, return top `limit`.
+SCREEN_FETCH_DEFAULT = 100
+SCREEN_FETCH_MAX = 500
+
 CHINA_CONTROLLED_RISK: dict[str, int] = {
     "Nd": 95,
     "Dy": 95,
@@ -155,6 +161,36 @@ def apply_supply_chain_filter(candidates: list[dict]) -> list[dict]:
     return filtered
 
 
+def _screen_fetch_limit(target_props: dict | None, final_limit: int) -> int:
+    """How many MP rows to pull before local rank-and-truncate (default 100, capped)."""
+    final_limit = max(1, final_limit)
+    props = target_props or {}
+    raw = props.get("mp_screen_fetch_limit", SCREEN_FETCH_DEFAULT)
+    try:
+        cap = int(raw)
+    except (TypeError, ValueError):
+        cap = SCREEN_FETCH_DEFAULT
+    cap = max(final_limit, min(cap, SCREEN_FETCH_MAX))
+    return cap
+
+
+def _rank_and_truncate(
+    candidates: list[dict],
+    target_props: dict | None,
+    final_limit: int,
+) -> list[dict]:
+    """Preliminary full `score_candidate` on each row, sort desc, keep top `final_limit`."""
+    if not candidates:
+        return []
+    spec = {"target_props": target_props or {}}
+    ranked = sorted(
+        candidates,
+        key=lambda c: score_candidate(c, spec),
+        reverse=True,
+    )
+    return ranked[: max(1, final_limit)]
+
+
 def get_candidates(
     allowed_elements: list[str],
     banned_elements: list[str],
@@ -162,13 +198,15 @@ def get_candidates(
     limit: int = 50,
 ) -> list[dict]:
     """Query Materials Project and return normalized candidate dicts."""
-    del target_props  # Reserved for future query tuning.
     load_dotenv()
     api_key = os.getenv("MP_API_KEY")
     if not api_key:
         raise RuntimeError("Missing MP_API_KEY in environment/.env")
 
-    kwargs = _build_search_kwargs(allowed_elements, banned_elements, limit)
+    final_limit = max(1, limit)
+    fetch_n = _screen_fetch_limit(target_props, final_limit)
+
+    kwargs = _build_search_kwargs(allowed_elements, banned_elements, fetch_n)
     docs: list[Any]
     try:
         with MPRester(api_key) as mpr:
@@ -180,13 +218,14 @@ def get_candidates(
                 docs = mpr.materials.summary.search(**kwargs)
     except Exception:
         # Python 3.13 currently has compatibility issues in parts of mp-api dependencies.
-        docs = _query_mp_http(api_key, allowed_elements, banned_elements, limit)
+        docs = _query_mp_http(api_key, allowed_elements, banned_elements, fetch_n)
 
     normalized = [_normalize_candidate(doc) for doc in docs]
 
     # Fallback widening: if strict element-conjunction returns no hits, broaden search.
     if not normalized and allowed_elements:
-        broadened_kwargs = _build_search_kwargs([], banned_elements, max(limit * 3, 60))
+        widen_n = min(SCREEN_FETCH_MAX, max(fetch_n * 2, 120))
+        broadened_kwargs = _build_search_kwargs([], banned_elements, widen_n)
         try:
             with MPRester(api_key) as mpr:
                 try:
@@ -195,12 +234,13 @@ def get_candidates(
                     broadened_kwargs.pop("num_elements", None)
                     broad_docs = mpr.materials.summary.search(**broadened_kwargs)
         except Exception:
-            broad_docs = _query_mp_http(api_key, [], banned_elements, max(limit * 3, 60))
+            broad_docs = _query_mp_http(api_key, [], banned_elements, widen_n)
 
         broad_norm = [_normalize_candidate(doc) for doc in broad_docs]
         allowed_set = {el for el in allowed_elements}
         normalized = [
             c for c in broad_norm if any(el in allowed_set for el in (c.get("elements", []) or []))
-        ][: max(1, limit)]
+        ]
 
-    return apply_supply_chain_filter(normalized)[: max(1, limit)]
+    enriched = apply_supply_chain_filter(normalized)
+    return _rank_and_truncate(enriched, target_props, final_limit)

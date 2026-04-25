@@ -145,6 +145,7 @@ def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
     target_props.setdefault("max_stability_above_hull", 0.1)
     target_props.setdefault("prefer_low_formation_energy", True)
     target_props.setdefault("avoid_rare_earths", bool(banned_elements))
+    target_props.setdefault("mp_screen_fetch_limit", 100)
 
     return {
         "allowed_elements": allowed_elements,
@@ -191,6 +192,7 @@ def _fallback_parse_hypothesis(text: str) -> dict[str, Any]:
         "max_stability_above_hull": 0.1,
         "prefer_low_formation_energy": True,
         "avoid_rare_earths": bool(banned_elements),
+        "mp_screen_fetch_limit": 100,
     }
 
     if "missile" in lower:
