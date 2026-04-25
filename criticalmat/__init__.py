@@ -1,0 +1,1 @@
+"""CriticalMat package."""
