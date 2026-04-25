@@ -23,6 +23,26 @@ def build_parser() -> argparse.ArgumentParser:
         default=5,
         help="Maximum loop iterations.",
     )
+    parser.add_argument(
+        "--mock-p1",
+        action="store_true",
+        help="Use mock P1 candidate retrieval/scoring instead of real P1 modules.",
+    )
+    parser.add_argument(
+        "--real-p2",
+        action="store_true",
+        help="Force real P2 functions (default behavior already tries real P2 with safe fallback).",
+    )
+    parser.add_argument(
+        "--mock-p2",
+        action="store_true",
+        help="Use mock P2 reasoning functions only.",
+    )
+    parser.add_argument(
+        "--strict-real",
+        action="store_true",
+        help="Disable all mock fallbacks; fail fast if real P1/P2 paths fail.",
+    )
     return parser
 
 
@@ -37,7 +57,13 @@ def main() -> None:
     if not hypothesis:
         hypothesis = "Find a permanent magnet for missile guidance systems without neodymium."
 
-    result = run_agent(hypothesis, max_iterations=args.max_iterations)
+    result = run_agent(
+        hypothesis,
+        max_iterations=args.max_iterations,
+        use_real_p1=not args.mock_p1,
+        use_real_p2=(args.real_p2 or not args.mock_p2),
+        allow_mock_fallback=not args.strict_real,
+    )
     best = result.get("best_candidate", {})
 
     print("\n=== Final Result ===")

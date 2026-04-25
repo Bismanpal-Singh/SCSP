@@ -99,3 +99,47 @@ Important constraints:
 - Keep the explanation clear for non-materials-science judges.
 - Keep it under 220 words.
 """
+
+def generate_next_hypothesis_prompt(memory: dict) -> str:
+    """
+    Prompt for generating the next autonomous material hypothesis.
+
+    This is the active-learning step:
+    based on previous candidates, scores, and failures, propose what to test next.
+    """
+
+    return f"""
+You are CriticalMat's active-learning materials agent.
+
+CriticalMat is an autonomous AI agent for critical-mineral substitution in national-security materials.
+The agent has already tested or screened some candidate materials.
+Your job is to propose the NEXT hypothesis to test.
+
+Memory from previous iterations:
+{json.dumps(memory, indent=2)}
+
+Return ONLY one plain-English sentence.
+Do not use markdown.
+Do not include a list.
+Do not include explanations outside the sentence.
+
+The next hypothesis should:
+- Avoid repeating material families that already failed.
+- Prefer rare-earth-free or rare-earth-light compositions.
+- Prefer lower supply-chain-risk elements.
+- Be specific enough for another agent to parse.
+- Be chemically reasonable for the target application.
+- Focus on what to try next, not on summarizing what already happened.
+
+Good examples:
+"Try Fe-N based compounds such as iron nitride because they may preserve strong magnetism while avoiding rare-earth dependence."
+"Explore Mn-Al-C family candidates because they are rare-earth-free and have known permanent-magnet potential."
+"Test Fe-Co-Ni compositions with reduced cobalt content to balance magnetic performance against supply-chain risk."
+"Explore ferrite-based candidates using Fe-O systems because they avoid rare earths and have low strategic supply risk."
+
+Bad examples:
+"Try something better."
+"Search the database again."
+"I think the previous result was good."
+"Use neodymium because it performs well."
+"""
