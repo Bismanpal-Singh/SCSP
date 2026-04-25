@@ -24,6 +24,7 @@ from google import genai
 from criticalmat.agents.prompts import (
     parse_hypothesis_prompt,
     interpret_results_prompt,
+    generate_next_hypothesis_prompt,
 )
 
 
@@ -49,7 +50,10 @@ def _get_client() -> genai.Client:
 
 def _call_gemini(prompt: str, temperature: float = 0.2) -> str:
     """
-    Call Gemini and return response text.
+    Call Gemini and return only visible text.
+
+    This manually extracts text parts so the SDK does not print warnings
+    about non-text parts such as thought_signature.
     """
     client = _get_client()
 
@@ -61,13 +65,31 @@ def _call_gemini(prompt: str, temperature: float = 0.2) -> str:
         },
     )
 
-    text = getattr(response, "text", None)
+    text_parts = []
+
+    if getattr(response, "candidates", None):
+        for candidate in response.candidates:
+            content = getattr(candidate, "content", None)
+            parts = getattr(content, "parts", None)
+
+            if parts:
+                for part in parts:
+                    part_text = getattr(part, "text", None)
+                    if part_text:
+                        text_parts.append(part_text)
+
+    text = "\n".join(text_parts).strip()
 
     if not text:
-        raise RuntimeError("Gemini returned an empty response.")
+        # fallback to response.text if manual extraction fails
+        text = getattr(response, "text", "") or ""
 
-    return text.strip()
+    text = text.strip()
 
+    if not text:
+        raise RuntimeError("Gemini returned an empty text response.")
+
+    return text
 
 def _extract_json(text: str) -> dict[str, Any]:
     """
@@ -284,6 +306,62 @@ def interpret_results(candidates: list, spec: dict, iteration: int) -> str:
             "The agent should next explore a nearby rare-earth-free composition family."
         )
 
+def generate_next_hypothesis(memory: dict) -> str:
+    """
+    Generate the next material hypothesis for the autonomous loop.
+
+    Required team interface:
+        generate_next_hypothesis(memory: dict) -> str
+
+    Returns:
+        A single plain-English sentence describing the next material family
+        or composition direction to test.
+    """
+    if memory is None:
+        memory = {}
+
+    prompt = generate_next_hypothesis_prompt(memory)
+
+    try:
+        response = _call_gemini(prompt, temperature=0.5)
+        cleaned = response.replace("\n", " ").strip().strip('"').strip("'")
+
+        # Keep only the first sentence if Gemini returns extra text.
+        if "." in cleaned:
+            cleaned = cleaned.split(".")[0].strip() + "."
+
+        if not cleaned:
+            raise ValueError("Gemini returned an empty next hypothesis.")
+
+        return cleaned
+
+    except Exception as exc:
+        print(f"[agent.py warning] Gemini next-hypothesis failed. Using fallback. Reason: {exc}")
+
+        memory_text = str(memory).lower()
+
+        if "fe16n2" not in memory_text and "iron nitride" not in memory_text and "fe-n" not in memory_text:
+            return (
+                "Try Fe-N based compounds such as iron nitride because they may preserve "
+                "strong magnetism while avoiding rare-earth dependence."
+            )
+
+        if "mn-al" not in memory_text and "mnal" not in memory_text:
+            return (
+                "Explore Mn-Al-C family candidates because they are rare-earth-free and have "
+                "known permanent-magnet potential."
+            )
+
+        if "ferrite" not in memory_text and "fe-o" not in memory_text:
+            return (
+                "Explore ferrite-based Fe-O candidates because they avoid rare earths and have "
+                "low strategic supply risk."
+            )
+
+        return (
+            "Test Fe-Co-Ni compositions with reduced cobalt content to balance magnetic "
+            "performance against supply-chain risk."
+        )
 
 if __name__ == "__main__":
     """
@@ -337,3 +415,25 @@ if __name__ == "__main__":
 
     explanation = interpret_results(fake_candidates, spec, iteration=1)
     print(explanation)
+
+    print("\n--- Testing generate_next_hypothesis() ---")
+    fake_memory = {
+        "tried_compositions": ["Fe16N2", "MnAl", "CoFe2O4"],
+        "scores_by_iteration": {
+            "1": 87
+        },
+        "current_best": {
+            "formula": "Fe16N2",
+            "score": 87,
+            "supply_chain_risk": 8,
+            "magnetic_moment": 2.4,
+            "stability_above_hull": 0.04
+        },
+        "rejection_reasons": [
+            "MnAl had lower magnetic moment.",
+            "CoFe2O4 was penalized for cobalt supply-chain risk."
+        ]
+    }
+
+    next_hypothesis = generate_next_hypothesis(fake_memory)
+    print(next_hypothesis)
