@@ -30,8 +30,25 @@ from criticalmat.agents.prompts import (
 
 load_dotenv()
 
-DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-lite-preview")
 
+RADIOACTIVE_ELEMENTS = {
+    "Tc", "Pm", "Po", "At", "Rn", "Fr", "Ra", "Ac", "Th", "Pa", "U",
+    "Np", "Pu", "Am", "Cm", "Bk", "Cf", "Es", "Fm", "Md", "No", "Lr"
+}
+
+COMMON_RARE_EARTHS = {
+    "Sc", "Y", "La", "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd",
+    "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu"
+}
+
+HIGH_TOXICITY_OR_PROBLEMATIC_ELEMENTS = {
+    "Hg", "Cd", "Pb", "As", "Be", "Tl"
+}
+
+PRECIOUS_OR_LOW_SCALABILITY_ELEMENTS = {
+    "Pt", "Pd", "Rh", "Ir", "Ru", "Os", "Au", "Ag"
+}
 
 def _get_client() -> genai.Client:
     """
@@ -128,6 +145,12 @@ def _extract_json(text: str) -> dict[str, Any]:
 def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
     """
     Make sure parse_hypothesis always returns the same stable structure.
+
+    This also strengthens constraints such as:
+    - non-radioactive
+    - solid-state
+    - manufacturable
+    - practical/scalable materials
     """
     allowed_elements = spec.get("allowed_elements", [])
     banned_elements = spec.get("banned_elements", [])
@@ -160,14 +183,43 @@ def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
     allowed_elements = list(dict.fromkeys(allowed_elements))
     banned_elements = list(dict.fromkeys(banned_elements))
 
-    # Add safe defaults for downstream scoring.
+    # Safe defaults for downstream scoring and interpretation.
     target_props.setdefault("material_class", "unknown")
     target_props.setdefault("needs_magnetism", False)
     target_props.setdefault("prefer_high_magnetic_moment", False)
     target_props.setdefault("max_stability_above_hull", 0.1)
     target_props.setdefault("prefer_low_formation_energy", True)
-    target_props.setdefault("avoid_rare_earths", bool(banned_elements))
+
+    # New explicit constraint defaults.
+    target_props.setdefault("avoid_rare_earths", bool(set(banned_elements) & COMMON_RARE_EARTHS))
+    target_props.setdefault("exclude_radioactive", True)
+    target_props.setdefault("require_solid_state", True)
+    target_props.setdefault("require_practical_materials", True)
+    target_props.setdefault("require_manufacturable", True)
+    target_props.setdefault("avoid_toxic_elements", True)
+    target_props.setdefault("avoid_precious_metals", False)
     target_props.setdefault("mp_screen_fetch_limit", 100)
+
+    # If user wants rare-earth avoidance, banned list should include common rare earths.
+    if target_props.get("avoid_rare_earths"):
+        for element in ["Nd", "Dy", "Tb", "Pr", "Sm", "Gd"]:
+            if element not in banned_elements:
+                banned_elements.append(element)
+
+    # If exclude_radioactive is true, add radioactive elements to banned list.
+    if target_props.get("exclude_radioactive"):
+        for element in sorted(RADIOACTIVE_ELEMENTS):
+            if element not in banned_elements:
+                banned_elements.append(element)
+
+    # If avoid toxic elements is true, add problematic elements to banned list.
+    if target_props.get("avoid_toxic_elements"):
+        for element in sorted(HIGH_TOXICITY_OR_PROBLEMATIC_ELEMENTS):
+            if element not in banned_elements:
+                banned_elements.append(element)
+
+    # Keep duplicates removed after adding constraints.
+    banned_elements = list(dict.fromkeys(banned_elements))
 
     return {
         "allowed_elements": allowed_elements,
@@ -176,7 +228,6 @@ def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
         "context": str(context),
         "defense_application": str(defense_application),
     }
-
 
 def _fallback_parse_hypothesis(text: str) -> dict[str, Any]:
     """
@@ -203,17 +254,94 @@ def _fallback_parse_hypothesis(text: str) -> dict[str, Any]:
     if "rare earth" in lower or "rare-earth" in lower or "chinese rare" in lower:
         banned_elements.extend(["Nd", "Dy", "Tb", "Pr", "Sm", "Gd"])
 
+    if "all rare earth" in lower or "avoid rare earth" in lower:
+        banned_elements.extend(sorted(COMMON_RARE_EARTHS))
+
+    exclude_radioactive = any(
+        phrase in lower
+        for phrase in [
+            "non-radioactive",
+            "non radioactive",
+            "radioactive-free",
+            "no radioactive",
+            "avoid radioactive",
+            "field-safe",
+            "safe",
+            "deployable",
+        ]
+    )
+
+    require_solid_state = any(
+        phrase in lower
+        for phrase in [
+            "solid-state",
+            "solid state",
+            "bulk material",
+            "crystal",
+            "ceramic",
+            "alloy",
+            "manufacturable",
+            "deployable",
+        ]
+    )
+
+    require_practical_materials = any(
+        phrase in lower
+        for phrase in [
+            "manufacturable",
+            "scalable",
+            "practical",
+            "production-ready",
+            "production ready",
+            "deployable",
+            "field-ready",
+            "field ready",
+        ]
+    )
+
+    avoid_toxic_elements = any(
+        phrase in lower
+        for phrase in [
+            "non-toxic",
+            "nontoxic",
+            "low-toxicity",
+            "low toxicity",
+            "environmentally safe",
+            "safe",
+            "deployable",
+        ]
+    )
+
     banned_elements = list(dict.fromkeys(banned_elements))
 
     is_magnet = "magnet" in lower
 
+    if "battery" in lower or "cathode" in lower:
+        material_class = "battery_material"
+    elif "semiconductor" in lower or "chip" in lower:
+        material_class = "semiconductor"
+    elif "coating" in lower or "corrosion" in lower:
+        material_class = "protective_coating"
+    elif is_magnet:
+        material_class = "permanent_magnet"
+    else:
+        material_class = "unknown"
+
     target_props = {
-        "material_class": "permanent_magnet" if is_magnet else "unknown",
+        "material_class": material_class,
         "needs_magnetism": is_magnet,
         "prefer_high_magnetic_moment": is_magnet,
         "max_stability_above_hull": 0.1,
         "prefer_low_formation_energy": True,
-        "avoid_rare_earths": bool(banned_elements),
+        "avoid_rare_earths": bool(set(banned_elements) & COMMON_RARE_EARTHS),
+
+        # New explicit constraints.
+        "exclude_radioactive": exclude_radioactive or True,
+        "require_solid_state": require_solid_state or True,
+        "require_practical_materials": require_practical_materials or True,
+        "require_manufacturable": require_practical_materials or True,
+        "avoid_toxic_elements": avoid_toxic_elements or True,
+        "avoid_precious_metals": False,
         "mp_screen_fetch_limit": 100,
     }
 
@@ -228,14 +356,15 @@ def _fallback_parse_hypothesis(text: str) -> dict[str, Any]:
     else:
         defense_application = "critical defense hardware"
 
-    return {
-        "allowed_elements": [],
-        "banned_elements": banned_elements,
-        "target_props": target_props,
-        "context": text,
-        "defense_application": defense_application,
-    }
-
+    return _normalize_spec(
+        {
+            "allowed_elements": [],
+            "banned_elements": banned_elements,
+            "target_props": target_props,
+            "context": text,
+            "defense_application": defense_application,
+        }
+    )
 
 def parse_hypothesis(text: str) -> dict:
     """
@@ -265,7 +394,86 @@ def parse_hypothesis(text: str) -> dict:
     except Exception as exc:
         print(f"[agent.py warning] Gemini parse failed. Using fallback parser. Reason: {exc}")
         return _fallback_parse_hypothesis(text)
+        
+def _candidate_elements(candidate: dict) -> set[str]:
+    """
+    Extract element symbols from a candidate dict.
+    """
+    elements = candidate.get("elements", [])
 
+    if isinstance(elements, list):
+        return {str(element).strip() for element in elements if str(element).strip()}
+
+    formula = str(candidate.get("formula", ""))
+    found = set(re.findall(r"[A-Z][a-z]?", formula))
+    return found
+
+
+def _annotate_candidate_eligibility(candidate: dict, spec: dict) -> dict:
+    """
+    Adds eligibility metadata to a candidate.
+
+    This prevents interpretation from calling unsafe or constraint-violating
+    candidates the 'best' or 'top' result.
+    """
+    annotated = dict(candidate)
+
+    target_props = spec.get("target_props", {})
+    banned_elements = set(spec.get("banned_elements", []))
+    elements = _candidate_elements(candidate)
+
+    reasons = []
+
+    banned_overlap = sorted(elements & banned_elements)
+    if banned_overlap:
+        reasons.append(f"contains banned element(s): {', '.join(banned_overlap)}")
+
+    if target_props.get("exclude_radioactive", True):
+        radioactive_overlap = sorted(elements & RADIOACTIVE_ELEMENTS)
+        if radioactive_overlap:
+            reasons.append(f"contains radioactive element(s): {', '.join(radioactive_overlap)}")
+
+    if target_props.get("avoid_toxic_elements", True):
+        toxic_overlap = sorted(elements & HIGH_TOXICITY_OR_PROBLEMATIC_ELEMENTS)
+        if toxic_overlap:
+            reasons.append(f"contains high-toxicity/problematic element(s): {', '.join(toxic_overlap)}")
+
+    if target_props.get("avoid_precious_metals", False):
+        precious_overlap = sorted(elements & PRECIOUS_OR_LOW_SCALABILITY_ELEMENTS)
+        if precious_overlap:
+            reasons.append(f"uses precious/low-scalability element(s): {', '.join(precious_overlap)}")
+
+    stability = candidate.get("stability_above_hull", None)
+    max_stability = target_props.get("max_stability_above_hull", 0.1)
+
+    try:
+        if stability is not None and float(stability) > float(max_stability):
+            reasons.append(
+                f"stability_above_hull {stability} exceeds limit {max_stability}"
+            )
+    except (TypeError, ValueError):
+        pass
+
+    # Optional practical-material heuristic.
+    if target_props.get("require_practical_materials", True):
+        formula = str(candidate.get("formula", ""))
+        if len(elements) > 5:
+            reasons.append("too many distinct elements for a practical first-pass material candidate")
+        if "Fr" in elements or "Ra" in elements or "Ac" in elements:
+            reasons.append("contains impractical radioactive/heavy element for deployable material")
+
+    annotated["eligible"] = len(reasons) == 0
+    annotated["eligibility_status"] = "ELIGIBLE" if len(reasons) == 0 else "INELIGIBLE"
+    annotated["ineligibility_reasons"] = reasons
+
+    return annotated
+
+
+def _annotate_candidates(candidates: list, spec: dict) -> list[dict]:
+    """
+    Annotate all candidates with eligibility metadata.
+    """
+    return [_annotate_candidate_eligibility(candidate, spec) for candidate in candidates]
 
 def interpret_results(candidates: list, spec: dict, iteration: int) -> str:
     """
@@ -280,9 +488,15 @@ def interpret_results(candidates: list, spec: dict, iteration: int) -> str:
             "The agent should broaden the search, relax constraints, or try a different material family."
         )
 
+    annotated_candidates = _annotate_candidates(candidates, spec)
+
+    # Sort eligible candidates first, then by score.
     candidates_sorted = sorted(
-        candidates,
-        key=lambda candidate: candidate.get("score", candidate.get("final_score", 0)),
+        annotated_candidates,
+        key=lambda candidate: (
+            1 if candidate.get("eligible", False) else 0,
+            candidate.get("score", candidate.get("final_score", 0)),
+        ),
         reverse=True,
     )
 
@@ -293,21 +507,48 @@ def interpret_results(candidates: list, spec: dict, iteration: int) -> str:
     except Exception as exc:
         print(f"[agent.py warning] Gemini interpretation failed. Using fallback. Reason: {exc}")
 
-        best = candidates_sorted[0]
-        formula = best.get("formula", "unknown material")
-        score = best.get("score", best.get("final_score", "N/A"))
-        magnetic_moment = best.get("magnetic_moment", "N/A")
-        stability = best.get("stability_above_hull", "N/A")
-        risk = best.get("supply_chain_risk", "N/A")
+        eligible_candidates = [
+            candidate for candidate in candidates_sorted
+            if candidate.get("eligible", False)
+        ]
 
-        return (
-            f"Iteration {iteration}: The strongest candidate is {formula} with a score of {score}. "
-            f"It has magnetic moment proxy {magnetic_moment}, stability above hull {stability}, "
-            f"and supply-chain risk {risk}. Lower-ranked candidates were likely rejected because "
-            "they had weaker magnetic proxies, poorer stability, or higher strategic dependency risk. "
-            "The agent should next explore a nearby rare-earth-free composition family."
+        ineligible_candidates = [
+            candidate for candidate in candidates_sorted
+            if not candidate.get("eligible", False)
+        ]
+
+        lines = [f"Iteration {iteration}: The agent screened candidates against the stated constraints."]
+
+        if ineligible_candidates:
+            for candidate in ineligible_candidates[:3]:
+                formula = candidate.get("formula", "unknown material")
+                reasons = "; ".join(candidate.get("ineligibility_reasons", []))
+                lines.append(f"{formula} is INELIGIBLE because {reasons}.")
+
+        if eligible_candidates:
+            best = eligible_candidates[0]
+            formula = best.get("formula", "unknown material")
+            score = best.get("score", best.get("final_score", "N/A"))
+            magnetic_moment = best.get("magnetic_moment", "N/A")
+            stability = best.get("stability_above_hull", "N/A")
+            risk = best.get("supply_chain_risk", "N/A")
+
+            lines.append(
+                f"The strongest eligible candidate is {formula} with a score of {score}. "
+                f"It has magnetic moment proxy {magnetic_moment}, stability above hull {stability}, "
+                f"and supply-chain risk {risk}."
+            )
+        else:
+            lines.append(
+                "No eligible candidate satisfied all hard constraints, so the agent should explore a different material family."
+            )
+
+        lines.append(
+            "These are virtual screening results only; physical validation would still be required."
         )
 
+        return " ".join(lines)
+    
 def generate_next_hypothesis(memory: dict) -> str:
     """
     Generate the next material hypothesis for the autonomous loop.
@@ -325,7 +566,7 @@ def generate_next_hypothesis(memory: dict) -> str:
     prompt = generate_next_hypothesis_prompt(memory)
 
     try:
-        response = _call_gemini(prompt, temperature=0.5)
+        response = _call_gemini(prompt, temperature=0.65)
         cleaned = response.replace("\n", " ").strip().strip('"').strip("'")
 
         # Keep only the first sentence if Gemini returns extra text.
@@ -342,29 +583,71 @@ def generate_next_hypothesis(memory: dict) -> str:
 
         memory_text = str(memory).lower()
 
-        if "fe16n2" not in memory_text and "iron nitride" not in memory_text and "fe-n" not in memory_text:
+        failed_or_tried_fe_n = any(
+            token in memory_text
+            for token in ["fe16n2", "iron nitride", "fe-n", "fen"]
+        )
+        failed_or_tried_mn_al = any(
+            token in memory_text
+            for token in ["mn-al", "mnal", "mn al", "manganese aluminum"]
+        )
+        failed_or_tried_ferrite = any(
+            token in memory_text
+            for token in ["ferrite", "fe-o", "feo", "strontium ferrite", "barium ferrite"]
+        )
+        cobalt_penalized = any(
+            token in memory_text
+            for token in ["cobalt risk", "co risk", "cobalt supply", "cofe", "cofe2o4", "cobalt"]
+        )
+        stability_failures = any(
+            token in memory_text
+            for token in ["unstable", "stability", "above hull", "poor stability"]
+        )
+        weak_magnetism = any(
+            token in memory_text
+            for token in ["weak magnetic", "lower magnetic", "low magnetic", "weaker magnetic"]
+        )
+
+        if stability_failures and not failed_or_tried_ferrite:
             return (
-                "Try Fe-N based compounds such as iron nitride because they may preserve "
-                "strong magnetism while avoiding rare-earth dependence."
+                "Test ferrite Fe-O candidates such as strontium ferrite because they avoid rare earths "
+                "and offer stronger chemical stability for scalable magnet applications."
             )
 
-        if "mn-al" not in memory_text and "mnal" not in memory_text:
+        if weak_magnetism and not failed_or_tried_fe_n:
             return (
-                "Explore Mn-Al-C family candidates because they are rare-earth-free and have "
-                "known permanent-magnet potential."
+                "Try Fe-N iron nitride candidates because they may provide stronger magnetic behavior "
+                "while avoiding rare-earth dependence."
             )
 
-        if "ferrite" not in memory_text and "fe-o" not in memory_text:
+        if not failed_or_tried_mn_al:
             return (
-                "Explore ferrite-based Fe-O candidates because they avoid rare earths and have "
-                "low strategic supply risk."
+                "Explore Mn-Al-C permanent magnet candidates because they are rare-earth-free, solid-state, "
+                "and more manufacturable than exotic rare-earth substitutes."
+            )
+
+        if not failed_or_tried_ferrite:
+            return (
+                "Test ferrite Fe-O candidates such as strontium ferrite because they avoid rare earths "
+                "and offer low supply-chain risk for scalable magnet applications."
+            )
+
+        if not failed_or_tried_fe_n:
+            return (
+                "Try Fe-N iron nitride candidates because they may preserve strong magnetism while avoiding "
+                "rare-earth dependence."
+            )
+
+        if cobalt_penalized:
+            return (
+                "Explore Co-free Fe-Ni-Mn alloy candidates because they may balance magnetic performance "
+                "with lower strategic supply-chain risk."
             )
 
         return (
-            "Test Fe-Co-Ni compositions with reduced cobalt content to balance magnetic "
-            "performance against supply-chain risk."
+            "Explore Heusler-style Mn-Al or Fe-Mn-Si candidates because they offer a different rare-earth-free "
+            "solid-state search direction for practical magnetic materials."
         )
-
 if __name__ == "__main__":
     """
     Local test for Person 2 only.
@@ -412,6 +695,26 @@ if __name__ == "__main__":
             "supply_chain_risk": 55,
             "elements": ["Co", "Fe", "O"],
             "mp_id": "mp-demo-003",
+        },
+        {
+            "formula": "Nd2Fe14B",
+            "score": 95,
+            "magnetic_moment": 3.1,
+            "formation_energy": -0.42,
+            "stability_above_hull": 0.02,
+            "supply_chain_risk": 95,
+            "elements": ["Nd", "Fe", "B"],
+            "mp_id": "mp-demo-004",
+        },
+        {
+            "formula": "UFe2",
+            "score": 90,
+            "magnetic_moment": 2.8,
+            "formation_energy": -0.30,
+            "stability_above_hull": 0.05,
+            "supply_chain_risk": 90,
+            "elements": ["U", "Fe"],
+            "mp_id": "mp-demo-005",
         },
     ]
 
