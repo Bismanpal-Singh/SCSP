@@ -238,6 +238,7 @@ def _run_agent_streaming(hypothesis: str, event_queue: queue.Queue) -> None:
                     "decisionLog": _clean_text_fields({
                         "mission": result.get("mission", hypothesis),
                         "constraints": constraints,
+                        "decision_log": list(result.get("decision_log", []) or []),
                         "portfolio": portfolio,
                         "ineligible": ineligible,
                         "test_queue": test_queue,

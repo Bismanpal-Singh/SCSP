@@ -386,6 +386,29 @@ function extractIterationSupplement(lines = []) {
   return highlights
 }
 
+function buildIterationSupplement(lines = [], topCandidates = []) {
+  const highlights = extractIterationSupplement(lines)
+  const hasBestScoreLine = highlights.some((line) => /\*\*Best score so far:\*\*/i.test(line))
+  const hasZeroBestScore = highlights.some((line) => /\*\*Best score so far:\*\*\s*0\b/i.test(line))
+  const topScore = topCandidates.length
+    ? Number(
+      [...topCandidates]
+        .sort((a, b) => Number(b?.score || 0) - Number(a?.score || 0))[0]?.score || 0,
+    )
+    : 0
+
+  if (!hasBestScoreLine && topScore > 0) {
+    highlights.push(`**Best score so far:** ${topScore}`)
+  } else if (hasZeroBestScore && topScore > 0) {
+    return highlights.map((line) => (
+      /\*\*Best score so far:\*\*\s*0\b/i.test(line)
+        ? `**Best score so far:** ${topScore}`
+        : line
+    ))
+  }
+  return highlights
+}
+
 function dedupeIneligible(items = []) {
   const merged = new Map()
   items.forEach((entry) => {
@@ -1391,11 +1414,17 @@ export default function DecisionTreePanel({
                     <div style={{ flex: 1, height: 1, background: 'rgba(167, 139, 250, 0.1)' }} />
                   </div>
                   <div className="mt-2">
-                    <MarkdownText
-                      text={extractIterationSupplement(block.lines).length
-                        ? extractIterationSupplement(block.lines).map((line) => `- ${line}`).join('\n')
-                        : 'Iteration-specific execution summary is shown below.'}
-                    />
+                    {(() => {
+                      const topForIteration = topCandidatesByIteration.get(Number(block.iteration)) || []
+                      const supplement = buildIterationSupplement(block.lines, topForIteration)
+                      return (
+                        <MarkdownText
+                          text={supplement.length
+                            ? supplement.map((line) => `- ${line}`).join('\n')
+                            : 'Iteration-specific execution summary is shown below.'}
+                        />
+                      )
+                    })()}
                   </div>
                   {topCandidatesByIteration.get(Number(block.iteration))?.length > 0 && (
                     <div className="mt-3 rounded-md border border-cyan-300/25 bg-cyan-400/[0.07] p-3">

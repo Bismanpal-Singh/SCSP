@@ -155,8 +155,10 @@ export default function InteractiveInput({ useMock = false }) {
       },
       onComplete: (result) => {
         setFinalCandidate(result?.finalCandidate || null)
-        const trace = result?.decisionLog?.agent_trace
-        setDecisionLog(Array.isArray(trace) ? trace : [])
+        const iterationCandidates = result?.decisionLog?.decision_log
+          || result?.decisionLog?.candidate_search?.iteration_candidates
+          || []
+        setDecisionLog(Array.isArray(iterationCandidates) ? iterationCandidates : [])
         setPortfolio(result?.portfolio || [])
         setIneligible(result?.ineligible || [])
         setTestQueue(result?.testQueue || [])

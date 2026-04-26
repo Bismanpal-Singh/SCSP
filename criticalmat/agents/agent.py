@@ -378,6 +378,10 @@ def _call_ollama(prompt: str, temperature: float = 0.2) -> str:
     model = os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
     host = os.getenv("OLLAMA_HOST", DEFAULT_OLLAMA_HOST).rstrip("/")
     timeout_s = float(os.getenv("OLLAMA_TIMEOUT_S", "60"))
+    api_key = str(os.getenv("OLLAMA_API_KEY", "") or "").strip()
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
 
     response = requests.post(
         f"{host}/api/chat",
@@ -387,6 +391,7 @@ def _call_ollama(prompt: str, temperature: float = 0.2) -> str:
             "stream": False,
             "options": {"temperature": temperature},
         },
+        headers=headers,
         timeout=timeout_s,
     )
     response.raise_for_status()
@@ -719,7 +724,10 @@ def _fallback_parse_hypothesis(text: str) -> dict[str, Any]:
 
     is_magnet = "magnet" in lower
 
-    if any(token in lower for token in ["actuator", "precision actuator", "servo"]):
+    if any(token in lower for token in ["high-temperature", "high temperature", "thermal barrier", "refractory", "aerospace component"]):
+        preferred_families = ["carbide", "nitride", "oxide", "silicide"]
+        allowed_elements = ["Ti", "Zr", "Hf", "Ta", "W", "Mo", "Nb", "Si", "Al", "C", "N", "O"]
+    elif any(token in lower for token in ["actuator", "precision actuator", "servo"]):
         preferred_families = ["mn_al", "fe_n"]
         allowed_elements = ["Mn", "Al", "C", "Fe", "N"]
     elif any(token in lower for token in ["missile", "guidance", "aerospace"]):
@@ -732,7 +740,9 @@ def _fallback_parse_hypothesis(text: str) -> dict[str, Any]:
         preferred_families = ["fe_n", "mn_al", "ferrite"]
         allowed_elements = ["Fe", "Mn", "Al", "N", "O", "C"]
 
-    if "battery" in lower or "cathode" in lower:
+    if any(token in lower for token in ["high-temperature", "high temperature", "refractory", "thermal barrier", "aerospace"]):
+        material_class = "high_temperature_structural_material"
+    elif "battery" in lower or "cathode" in lower:
         material_class = "battery_material"
     elif "semiconductor" in lower or "chip" in lower:
         material_class = "semiconductor"
@@ -812,22 +822,8 @@ def parse_hypothesis(text: str) -> dict:
         parsed["context"] = text
         return _normalize_spec(parsed)
     except Exception as exc:
-        print(f"[agent.py warning] Gemini parse failed. Using fallback parser. Reason: {exc}")
-        return {
-            "allowed_elements": ["Fe", "Mn", "Al", "Ni", "Si", "C", "N", "B"],
-            "banned_elements": ["Nd", "Dy", "Tb", "Ho", "Pr", "Eu", "Gd", "Co", "Sm", "Ce", "La", "Y"],
-            "target_props": {
-                "magnetic_moment": {"min": 2.0},
-                "formation_energy": {"max": 0.0},
-                "stability_above_hull": {"max": 0.1},
-                "material_class": "unknown",
-                "exclude_radioactive": True,
-                "require_solid_state": True,
-                "require_manufacturable": True,
-                "require_non_toxic": True,
-            },
-            "context": "Rare-earth-free permanent magnet for defense applications",
-        }
+        print(f"[agent.py warning] LLM parse failed. Using rule-based fallback parser. Reason: {exc}")
+        return _fallback_parse_hypothesis(text)
         
 def _candidate_elements(candidate: dict) -> set[str]:
     """
@@ -1676,69 +1672,62 @@ def generate_lab_ready_portfolio(candidates: list[dict], spec: dict, memory: dic
     prompt = lab_ready_portfolio_prompt(top, spec or {}, memory or {})
 
     def _fallback_portfolio() -> dict:
-        fallback_entries = [
-            {
-                "rank": 1,
-                "candidate": "Mn4Al9",
-                "family": "Mn-Al",
-                "scores": {
-                    "scientific_fit": 88,
-                    "stability": 79,
-                    "supply_chain_safety": 100,
-                    "manufacturability": 90,
-                    "evidence_confidence": 90,
-                    "overall": 89,
-                },
-                "main_uncertainty": "Phase stability of Mn-Al intermetallic ordering above 400C remains uncertain.",
-                "likely_failure_mode": "Thermal exposure may reduce coercivity by phase decomposition.",
-                "recommended_experiment": "XRD phase analysis post-anneal plus VSM coercivity/remanence characterization.",
-                "status": "TEST_FIRST",
-            },
-            {
-                "rank": 2,
-                "candidate": str(top[1].get("formula", "Mn2O3")) if len(top) > 1 else "Mn2O3",
-                "family": str(top[1].get("material_family", "Fe-O")) if len(top) > 1 else "Fe-O",
-                "scores": {
-                    "scientific_fit": int(top[1].get("scientific_fit_logic", 70)) if len(top) > 1 else 70,
-                    "stability": int(top[1].get("stability_score", 62)) if len(top) > 1 else 62,
-                    "supply_chain_safety": int(top[1].get("supply_chain_safety_score", 60)) if len(top) > 1 else 60,
-                    "manufacturability": int(top[1].get("manufacturability_score", 80)) if len(top) > 1 else 80,
-                    "evidence_confidence": int(top[1].get("evidence_confidence_score", 90)) if len(top) > 1 else 90,
-                    "overall": int(top[1].get("score", 72)) if len(top) > 1 else 72,
-                },
-                "main_uncertainty": "Magnetic anisotropy and achievable coercivity under actuator-relevant processing are uncertain.",
-                "likely_failure_mode": "Insufficient coercivity for guidance actuators despite acceptable stability.",
-                "recommended_experiment": "SEM microstructure check and VSM loop measurement after controlled annealing.",
-                "status": "BACKUP_TEST",
-            },
-            {
-                "rank": 3,
-                "candidate": "Fe",
-                "family": "Fe-N",
-                "scores": {
-                    "scientific_fit": 45,
-                    "stability": 95,
-                    "supply_chain_safety": 85,
-                    "manufacturability": 90,
-                    "evidence_confidence": 75,
-                    "overall": 76,
-                },
-                "main_uncertainty": "Pure Fe baseline may lack permanent-magnet coercivity without nitride/phase engineering.",
-                "likely_failure_mode": "Low coercivity and remanence compared to actuator requirements.",
-                "recommended_experiment": "SQUID/VSM baseline magnetic characterization to benchmark coercivity gap.",
-                "status": "SAFE_FALLBACK",
-            },
-        ]
+        if top:
+            statuses = ["TEST_FIRST", "BACKUP_TEST", "SAFE_FALLBACK"]
+            fallback_entries = []
+            for idx, source in enumerate(top[:3], start=1):
+                score = int(source.get("score", 0) or 0)
+                family = str(source.get("material_family", "Unknown") or "Unknown")
+                formula = str(source.get("formula", f"Candidate-{idx}") or f"Candidate-{idx}")
+                fallback_entries.append(
+                    {
+                        "rank": idx,
+                        "candidate": formula,
+                        "family": family,
+                        "scores": {
+                            "scientific_fit": int(source.get("scientific_fit_logic", source.get("scientific_fit_score", score)) or score),
+                            "stability": int(source.get("stability_score", score) or score),
+                            "supply_chain_safety": int(source.get("supply_chain_safety_score", max(0, 100 - int(source.get("supply_chain_risk", 0) or 0))) or 0),
+                            "manufacturability": int(source.get("manufacturability_score", 70) or 70),
+                            "evidence_confidence": int(source.get("evidence_confidence_score", 70) or 70),
+                            "overall": score,
+                        },
+                        "main_uncertainty": f"Class-specific validation is needed for {formula} under mission-relevant operating conditions.",
+                        "likely_failure_mode": f"{formula} may underperform in deployment without process optimization and phase control.",
+                        "recommended_experiment": _class_default_experiment(material_class),
+                        "status": statuses[idx - 1] if idx <= len(statuses) else "EXPLORE_LATER",
+                    }
+                )
+        else:
+            fallback_entries = [
+                {
+                    "rank": 1,
+                    "candidate": "No candidate selected",
+                    "family": "Unknown",
+                    "scores": {
+                        "scientific_fit": 0,
+                        "stability": 0,
+                        "supply_chain_safety": 0,
+                        "manufacturability": 0,
+                        "evidence_confidence": 0,
+                        "overall": 0,
+                    },
+                    "main_uncertainty": "No class-relevant candidates were available in this iteration.",
+                    "likely_failure_mode": "Search space too narrow for current constraints and retrieval budget.",
+                    "recommended_experiment": _class_default_experiment(material_class),
+                    "status": "EXPLORE_LATER",
+                }
+            ]
         return {
             "portfolio": fallback_entries,
             "test_queue": [
-                "1. Arc melt Mn4Al9 precursors under argon - confirm phase by XRD",
-                "2. VSM characterization of coercivity and remanence at room temperature",
-                "3. Thermal stability test: anneal at 400C for 48h, then re-characterize",
+                f"1. {_class_default_experiment(material_class)}",
+                "2. Validate phase and compositional stability under mission-relevant thermal cycle",
+                "3. Run repeatability and manufacturability checks on the top-ranked candidate",
             ],
             "provenance_tree": {
                 "source": "criticalmat_agent_fallback",
-                "notes": "Deterministic 2.0 fallback portfolio",
+                "notes": "Class-aware fallback portfolio built from retrieved top candidates",
             },
         }
 

@@ -387,6 +387,7 @@ def run_agent(
     original_spec: dict | None = None
     agent_trace: list[dict[str, Any]] = []
     seen_top_formulas: set[str] = set()
+    decision_log_entries: list[dict[str, Any]] = []
     retrieval_budget = _as_int_env("CRITICALMAT_AGENTIC_RETRIEVE_BUDGET", 1)
     retrieval_used = 0
     decision_timeout_s = _as_int_env("CRITICALMAT_AGENTIC_DECISION_TIMEOUT_S", 4)
@@ -519,6 +520,52 @@ def run_agent(
                 material_family=selected_top.get("material_family"),
             )
 
+        # Capture top candidates per iteration for frontend branching tree.
+        raw_top_candidates = eligible_candidates[:6] if eligible_candidates else scored_candidates[:6]
+        top_iteration_candidates: list[dict] = []
+        seen_candidate_keys: set[str] = set()
+        for candidate in raw_top_candidates:
+            candidate_key = f"{str(candidate.get('formula', '') or '').strip()}|{str(candidate.get('mp_id', '') or '').strip()}"
+            if candidate_key in seen_candidate_keys:
+                continue
+            seen_candidate_keys.add(candidate_key)
+            top_iteration_candidates.append(candidate)
+            if len(top_iteration_candidates) >= 3:
+                break
+
+        selected_formula = str(selected_top.get("formula", "") or "").strip() if selected_top else ""
+        selected_mp_id = str(selected_top.get("mp_id", "") or "").strip() if selected_top else ""
+        selected_marked = False
+        for candidate in top_iteration_candidates:
+            formula = str(candidate.get("formula", "unknown") or "unknown")
+            score_value = int(candidate.get("score", 0) or 0)
+            mp_id_value = str(candidate.get("mp_id", "") or "").strip()
+            same_as_selected = bool(
+                selected_formula
+                and formula == selected_formula
+                and (not selected_mp_id or mp_id_value == selected_mp_id)
+            )
+            is_selected = bool(same_as_selected and not selected_marked)
+            if is_selected:
+                selected_marked = True
+            reason_text = (
+                "Selected as best candidate for next iteration."
+                if is_selected
+                else ("Maintained as alternate branch candidate." if _is_candidate_eligible(candidate) else _candidate_rejection_reason(candidate))
+            )
+            decision_log_entries.append(
+                {
+                    "iteration": iteration,
+                    "formula": formula,
+                    "score": score_value,
+                    "decision": "selected" if is_selected else "explored",
+                    "reason": reason_text,
+                    "mp_id": candidate.get("mp_id"),
+                    "mpId": candidate.get("mp_id"),
+                    "status": "ELIGIBLE" if _is_candidate_eligible(candidate) else "INELIGIBLE",
+                }
+            )
+
         try:
             interpretation = p2_interpret_fn(
                 eligible_candidates[:5],
@@ -536,6 +583,33 @@ def run_agent(
             iteration_portfolio = p2_portfolio_fn(eligible_top, spec, memory.to_dict()) or {}
             memory.portfolio_history.append(iteration_portfolio)
             memory.experiment_queue = list(iteration_portfolio.get("test_queue", []) or [])
+
+        # When retrieval/scoring returns no visible candidates, still expose
+        # top-3 per-iteration leaves from the generated portfolio so the
+        # frontend tree can render every iteration branch path.
+        if not top_iteration_candidates:
+            portfolio_candidates = list((iteration_portfolio.get("portfolio", []) or []))[:3]
+            for idx, entry in enumerate(portfolio_candidates):
+                formula = str(entry.get("formula", entry.get("candidate", "unknown")) or "unknown")
+                score_value = int(
+                    entry.get("score")
+                    or entry.get("overall_score")
+                    or (entry.get("scores", {}) or {}).get("overall")
+                    or 0
+                )
+                status = str(entry.get("status", "EXPLORE_LATER") or "EXPLORE_LATER").upper()
+                decision_log_entries.append(
+                    {
+                        "iteration": iteration,
+                        "formula": formula,
+                        "score": score_value,
+                        "decision": "selected" if (status == "TEST_FIRST" or idx == 0) else "explored",
+                        "reason": str(entry.get("rationale", "Candidate carried forward from portfolio generation.")),
+                        "mp_id": entry.get("mp_id") or entry.get("mpId"),
+                        "mpId": entry.get("mp_id") or entry.get("mpId"),
+                        "status": "ELIGIBLE" if status != "INELIGIBLE" else "INELIGIBLE",
+                    }
+                )
 
         fallback_action = _fallback_action(
             iteration=iteration,
@@ -663,6 +737,7 @@ def run_agent(
     final_result = {
         "mission": hypothesis,
         "constraints": dict(latest_spec),
+        "decision_log": decision_log_entries,
         "portfolio": portfolio_entries,
         "ineligible": ineligible_entries,
         "test_queue": test_queue,
@@ -671,6 +746,7 @@ def run_agent(
             "constraints": constraints_payload,
             "candidate_search": {
                 "iterations_run": len(best_scores),
+                "iteration_candidates": decision_log_entries,
                 "ineligible": [
                     {"formula": row.get("formula", "unknown"), "reason": row.get("reason", "")}
                     for row in ineligible_entries
