@@ -121,51 +121,70 @@ function normalizeTree({ decisionLog, decisionTree, finalCandidate, iterations, 
   }
 }
 
-function normalizeTreeFromProvenance({ provenanceTree, query }) {
+function normalizeTreeFromProvenance({ provenanceTree, query, decisionLog = [] }) {
   const constraints = provenanceTree?.constraints || {}
   const candidateSearch = provenanceTree?.candidate_search || {}
   const ineligible = candidateSearch.ineligible || []
   const portfolio = candidateSearch.portfolio || []
+  const portfolioByFormula = new Map(
+    portfolio
+      .filter((item) => item?.candidate)
+      .map((item) => [String(item.candidate), item]),
+  )
 
-  const levels = [
-    {
+  const byIteration = decisionLog.reduce((map, entry) => {
+    const iteration = Number(entry?.iteration || 1)
+    if (!map.has(iteration)) map.set(iteration, [])
+    map.get(iteration).push(entry)
+    return map
+  }, new Map())
+
+  let levels = Array.from(byIteration.entries())
+    .sort(([a], [b]) => a - b)
+    .slice(0, 3)
+    .map(([iteration, entries]) => {
+      const top3 = [...entries]
+        .sort((a, b) => Number(b?.score || 0) - Number(a?.score || 0))
+        .slice(0, 3)
+        .map((entry, index) => {
+          const formula = String(entry?.formula || 'Candidate')
+          const portfolioEntry = portfolioByFormula.get(formula)
+          const selected = entry?.decision === 'selected'
+          return {
+            id: `iter-${iteration}-${formula}-${index}`,
+            formula,
+            mpId: entry?.mpId || portfolioEntry?.mpId,
+            score: Number(entry?.score || 0),
+            status: selected ? 'winner' : 'explored',
+            isBest: selected || index === 0,
+            reason: entry?.reason,
+          }
+        })
+
+      return {
+        iteration,
+        candidatesTested: Math.max(1, entries.length),
+        candidates: top3,
+      }
+    })
+
+  if (!levels.length) {
+    levels = [{
       iteration: 1,
-      candidatesTested: 1,
-      candidates: [
-        {
-          id: 'constraints-node',
-          formula: 'Constraints',
-          score: Math.min(100, Number((constraints.banned_elements || []).length || 0)),
-          status: 'explored',
-          isBest: true,
-        },
-      ],
-    },
-    {
-      iteration: 2,
       candidatesTested: Math.max(1, ineligible.length + portfolio.length),
       candidates: [
-        ...ineligible.slice(0, 2).map((item, index) => ({
-          id: `ineligible-${index}-${item.formula || 'x'}`,
-          formula: item.formula || 'Ineligible',
-          mpId: item.mpId,
-          score: 0,
-          status: 'rejected',
-          isBest: false,
-          reason: item.reason,
-        })),
         ...portfolio.slice(0, 3).map((item, index) => ({
           id: `portfolio-${index}-${item.candidate || 'x'}`,
           formula: item.candidate || 'Candidate',
           mpId: item.mpId,
           score: Number(item.rank ? 100 - item.rank * 5 : 80),
           status: item.rank === 1 ? 'winner' : 'explored',
-          isBest: item.rank === 1,
+          isBest: item.rank === 1 || index === 0,
           portfolioStatus: item.status,
         })),
       ],
-    },
-  ]
+    }]
+  }
 
   const nodes = [
     {
@@ -210,6 +229,7 @@ function normalizeTreeFromProvenance({ provenanceTree, query }) {
 function sanitizeTranscriptText(text = '') {
   return String(text)
     .replace(/\r\n/g, '\n')
+    .replace(/[\u2500-\u257f]/g, ' ')
     .replace(/[╔╗╚╝║╭╮╰╯┏┓┗┛┡┩┠┨┯┷┿┼━─]/g, ' ')
     .replace(/[ \t]{2,}/g, ' ')
     .trim()
@@ -250,7 +270,9 @@ function transcriptSections(text = '') {
 
 function formatTranscriptLine(line = '') {
   const cleaned = String(line)
+    .replace(/[\u2500-\u257f]/g, ' ')
     .replace(/\|/g, ' ')
+    .replace(/…/g, '')
     .replace(/^[#>\-*\s]+/, '')
     .replace(/[*#`]/g, '')
     .replace(/\s+/g, ' ')
@@ -264,6 +286,11 @@ function isNoiseLine(line = '') {
   if (/^[-=]{3,}$/.test(value)) return true
   if (/^[|]+$/.test(value)) return true
   if (/^#{1,6}\s*$/.test(value)) return true
+  if (/[\u2500-\u257f]/.test(value)) return true
+  if (/^(Sci|Supply|Candidate|Status|Overall|Fit|Stabil|Risk|Confide)/i.test(value)) return true
+  if (/^(╇|┳|┻|┯|┷)+/.test(value)) return true
+  if (/(RANKED MATERIAL PORTFOLIO|WHAT WE STILL DON'T KNOW|Candidate Status|BACKUP_TE|SAFE_FALL|TEST_FIRST)/i.test(value)) return true
+  if (/^\d+\s+\d+(\s+\d+){2,}/.test(value)) return true
   return false
 }
 
@@ -271,6 +298,8 @@ function cleanNarrativeLines(lines = []) {
   return lines
     .map((line) => formatTranscriptLine(line))
     .filter((line) => !isNoiseLine(line))
+    .map((line) => line.replace(/^\d+[.)]\s+/, '').trim())
+    .filter(Boolean)
 }
 
 function composeParagraph(lines = []) {
@@ -279,6 +308,105 @@ function composeParagraph(lines = []) {
 
 function sectionText(lines = []) {
   return cleanNarrativeLines(lines).join('\n')
+}
+
+function normalizeRunDetailsText(text = '') {
+  return String(text)
+    .replace(/CRITICALMAT\s+AI-Accelerated\s+Critical\s+Minerals\s+Discovery\s*Hypothesis:\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function structureReasoningText(text = '') {
+  const labels = [
+    'CriticalMat Iteration \\d+:',
+    'Iteration \\d+:',
+    'PROMISING COMPUTATIONAL CANDIDATE:',
+    'WINNER:',
+    'Score:',
+    'Magnetic moment:',
+    'Supply chain risk:',
+    'China dependency',
+    'Synthesis route:',
+    'REJECTED\\s+[—-]\\s+INELIGIBLE CANDIDATES',
+    'RANKED MATERIAL PORTFOLIO',
+    "WHAT WE STILL DON'T KNOW",
+    'MISSION:',
+    'Constraints',
+    'Candidate Search',
+    'PORTFOLIO',
+    'Lab-Ready Test Queue',
+    'LAB-READY TEST QUEUE',
+    'Testing Scope:',
+    'INELIGIBLE CANDIDATES:',
+    'Strongest Candidate:',
+    'Supply-Chain Impact:',
+    'Lessons Learned:',
+    'Disclaimer:',
+  ]
+  const pattern = new RegExp(`\\s*(${labels.join('|')})\\s*`, 'gi')
+  const withBreaks = String(text)
+    .replace(pattern, '\n\n**$1** ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return withBreaks.replace(/^\*\*(Iteration \d+:)\*\*\s*/i, '**$1** ')
+}
+
+function prepareSectionNarrative(title = '', lines = []) {
+  const raw = sectionText(lines)
+  if (!raw) return ''
+  if (/^Run Details$/i.test(String(title).trim())) {
+    return normalizeRunDetailsText(raw)
+  }
+  if (/AI REASONING/i.test(String(title).trim()) || /^Final Result$/i.test(String(title).trim())) {
+    return structureReasoningText(raw)
+  }
+  return raw
+}
+
+function extractIterationSupplement(lines = []) {
+  const cleaned = cleanNarrativeLines(lines).join(' ')
+  if (!cleaned) return []
+
+  const highlights = []
+  const iterationMatch = cleaned.match(/Iteration\s+\d+\s*\/\s*\d+/i)
+  const bestScoreMatch = cleaned.match(/Best score so far\s*\d+/i)
+  const bestEligibleMatch = cleaned.match(/Best eligible score this round:\s*\d+/i)
+  const scoredMatch = cleaned.match(/Scored candidates/i)
+
+  if (iterationMatch) highlights.push(`**Progress:** ${iterationMatch[0]}`)
+  if (bestScoreMatch) highlights.push(`**Best score so far:** ${bestScoreMatch[0].replace(/Best score so far\s*/i, '')}`)
+  if (bestEligibleMatch) highlights.push(`**Best eligible score:** ${bestEligibleMatch[0].replace(/Best eligible score this round:\s*/i, '')}`)
+  if (scoredMatch) highlights.push('**Scoring:** Candidate scoring completed for this iteration.')
+
+  const topCandidateMatch = cleaned.match(/Status\s+([A-Za-z0-9₀-₉-]+)\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+✓?\s*([\d.]+%?)\s+(ELIGIBLE|INELIGIBLE|BACKUP_TEST|SAFE_FALLBACK|TEST_FIRST)/i)
+  if (topCandidateMatch) {
+    const [, formula, score, moment, risk, status] = topCandidateMatch
+    highlights.push(`**Top candidate snapshot:** ${formula} | score ${score} | magnetic moment ${moment} | supply risk ${risk} | ${status}`)
+  }
+
+  return highlights
+}
+
+function dedupeIneligible(items = []) {
+  const merged = new Map()
+  items.forEach((entry) => {
+    const formula = String(entry?.formula || '').trim()
+    if (!formula) return
+    const key = formula.toUpperCase()
+    const reason = String(entry?.reason || 'Constraint violation').trim()
+    const existing = merged.get(key)
+    if (!existing) {
+      merged.set(key, { ...entry, formula, reasons: [reason] })
+    } else if (!existing.reasons.includes(reason)) {
+      existing.reasons.push(reason)
+      merged.set(key, existing)
+    }
+  })
+  return Array.from(merged.values()).map((entry) => ({
+    ...entry,
+    reason: entry.reasons.join(' ; '),
+  }))
 }
 
 const thStyle = {
@@ -406,6 +534,71 @@ function extractIterationReasoning(text = '') {
 
   if (current && current.lines.length) blocks.push(current)
   return blocks
+}
+
+function extractIterationProgressBlocks(text = '') {
+  const lines = String(text).split('\n')
+  const blocks = []
+  let current = null
+
+  for (const rawLine of lines) {
+    const clean = formatTranscriptLine(rawLine)
+    if (!clean || isNoiseLine(clean)) continue
+
+    const match = clean.match(/^Iteration\s+(\d+)\s*\/\s*(\d+)/i)
+    if (match) {
+      if (current && current.lines.length) blocks.push(current)
+      current = { iteration: Number(match[1]), lines: [clean] }
+      continue
+    }
+
+    if (!current) continue
+    if (/^AI REASONING\s*-\s*Iteration/i.test(clean) || /^FINAL RESULT$/i.test(clean)) {
+      if (current.lines.length) blocks.push(current)
+      current = null
+      continue
+    }
+
+    if (
+      /^Best score so far/i.test(clean)
+      || /^Scored candidates/i.test(clean)
+      || /^Best eligible score/i.test(clean)
+      || /^Formula\s+Score/i.test(clean)
+      || /ELIGIBLE|INELIGIBLE|BACKUP_TEST|SAFE_FALLBACK|TEST_FIRST/i.test(clean)
+    ) {
+      current.lines.push(clean)
+    }
+  }
+
+  if (current && current.lines.length) blocks.push(current)
+  return blocks
+}
+
+function parseIneligibleCandidates(lines = []) {
+  const source = cleanNarrativeLines(lines).join(' ')
+  const matches = []
+  const regex = /X\s+([A-Za-z0-9₀-₉()\-]+)\s*[—:-]\s*([^X]+?)(?=\s+X\s+[A-Za-z0-9₀-₉()\-]+\s*[—:-]|$)/g
+  let match
+  while ((match = regex.exec(source)) !== null) {
+    const formula = String(match[1] || '').trim()
+    const reason = String(match[2] || '').trim()
+    if (formula && reason) matches.push({ formula, reason })
+  }
+  const mergedByFormula = new Map()
+  for (const item of matches) {
+    const formulaKey = String(item.formula || '').replace(/\s+/g, '').toUpperCase()
+    const existing = mergedByFormula.get(formulaKey)
+    if (!existing) {
+      mergedByFormula.set(formulaKey, { formula: item.formula, reasons: [item.reason] })
+    } else if (!existing.reasons.includes(item.reason)) {
+      existing.reasons.push(item.reason)
+      mergedByFormula.set(formulaKey, existing)
+    }
+  }
+  return Array.from(mergedByFormula.values()).map((entry) => ({
+    formula: entry.formula,
+    reason: entry.reasons.join(' ; '),
+  }))
 }
 
 function extractUncertaintyRows(text = '') {
@@ -760,17 +953,18 @@ export default function DecisionTreePanel({
   const [modalNode, setModalNode] = useState(null)
 
   const tree = useMemo(() => {
-    if (provenanceTree) return normalizeTreeFromProvenance({ provenanceTree, query })
+    if (provenanceTree) return normalizeTreeFromProvenance({ provenanceTree, query, decisionLog })
     return normalizeTree({ decisionLog, decisionTree, finalCandidate, iterations, query })
   }, [decisionLog, decisionTree, finalCandidate, iterations, provenanceTree, query])
 
   const insights = useMemo(() => {
     const transcriptUncertaintyRows = extractUncertaintyRows(terminalTranscript)
+    const dedupedIneligible = dedupeIneligible(ineligible || provenanceTree?.candidate_search?.ineligible || [])
     if (portfolio.length || ineligible.length || testQueue.length || provenanceTree) {
       return {
         mission: provenanceTree?.mission || query || 'Mission not provided.',
         constraints: constraints || provenanceTree?.constraints || {},
-        ineligible: ineligible || provenanceTree?.candidate_search?.ineligible || [],
+        ineligible: dedupedIneligible,
         portfolio: portfolio || [],
         uncertaintyMap: transcriptUncertaintyRows.length
           ? transcriptUncertaintyRows
@@ -813,6 +1007,28 @@ export default function DecisionTreePanel({
   }, [constraints, decisionLog, finalCandidate, ineligible, iterations, portfolio, provenanceTree, query, terminalTranscript, testQueue])
 
   const iterationReasoning = useMemo(() => extractIterationReasoning(terminalTranscript), [terminalTranscript])
+  const iterationProgressBlocks = useMemo(() => extractIterationProgressBlocks(terminalTranscript), [terminalTranscript])
+  const mergedIterationBlocks = useMemo(() => {
+    const map = new Map()
+    iterationProgressBlocks.forEach((block) => {
+      map.set(Number(block.iteration), { iteration: Number(block.iteration), lines: [...(block.lines || [])] })
+    })
+    iterationReasoning.forEach((block) => {
+      const iteration = Number(block.iteration)
+      const existing = map.get(iteration)
+      if (existing) {
+        existing.lines = [...existing.lines, ...(block.lines || [])]
+        map.set(iteration, existing)
+      } else {
+        map.set(iteration, { iteration, lines: [...(block.lines || [])] })
+      }
+    })
+    const sorted = Array.from(map.values()).sort((a, b) => a.iteration - b.iteration)
+    // Hide final iteration duplicate block when final result section already exists.
+    if (sorted.length <= 1) return sorted
+    const maxIteration = Math.max(...sorted.map((item) => Number(item.iteration || 0)))
+    return sorted.filter((item) => Number(item.iteration) !== maxIteration)
+  }, [iterationProgressBlocks, iterationReasoning])
   const candidatesByIteration = useMemo(() => {
     const map = new Map()
     tree.levels.forEach((level) => {
@@ -820,6 +1036,27 @@ export default function DecisionTreePanel({
     })
     return map
   }, [tree.levels])
+  const topCandidatesByIteration = useMemo(() => {
+    const map = new Map()
+    tree.levels.forEach((level) => {
+      let top = [...(level.candidates || [])]
+        .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
+        .slice(0, 3)
+      if (Number(level.iteration) === 1 && top.length < 3) {
+        const fallbackTop = (insights.portfolio || []).slice(0, 3).map((entry) => ({
+          formula: entry.candidate,
+          score: entry.scores?.overall ?? entry.rank ?? 0,
+          status: entry.status || 'EXPLORED',
+          isBest: entry.status === 'TEST_FIRST',
+        }))
+        if (fallbackTop.length) {
+          top = fallbackTop
+        }
+      }
+      map.set(Number(level.iteration), top)
+    })
+    return map
+  }, [insights.portfolio, tree.levels])
 
   function showTooltip(node, event) {
     if (node.status === 'root') return
@@ -1114,7 +1351,7 @@ export default function DecisionTreePanel({
                 <article key={`${section.title}-${index}`} className="rounded-lg border border-violet-300/15 bg-[#0b1224]/85 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
                   <h4 className="text-sm font-semibold text-white/95">{section.title}</h4>
                   <div className="mt-2">
-                    <MarkdownText text={sectionText(section.lines.slice(0, 28))} />
+                    <MarkdownText text={prepareSectionNarrative(section.title, section.lines.slice(0, 36))} />
                   </div>
                 </article>
               ))}
@@ -1130,9 +1367,9 @@ export default function DecisionTreePanel({
             title="Iteration Reasoning"
             subtitle="Step-by-step rationale for each iteration."
           />
-          {iterationReasoning.length ? (
+          {mergedIterationBlocks.length ? (
             <div className="mt-4 space-y-3">
-              {iterationReasoning.map((block) => (
+              {mergedIterationBlocks.map((block) => (
                 <article key={`iteration-reasoning-${block.iteration}`} className="rounded-lg border border-cyan-300/20 bg-[#0a1322]/90 p-4 shadow-[0_8px_24px_rgba(0,0,0,0.2)]">
                   <div style={{
                     margin: '0 0 12px 0',
@@ -1155,10 +1392,47 @@ export default function DecisionTreePanel({
                     </span>
                     <div style={{ flex: 1, height: 1, background: 'rgba(167, 139, 250, 0.1)' }} />
                   </div>
-                  <h4 className="text-sm font-semibold text-cyan-100">Iteration {block.iteration}</h4>
                   <div className="mt-2">
-                    <MarkdownText text={sectionText(block.lines)} />
+                    <MarkdownText
+                      text={extractIterationSupplement(block.lines).length
+                        ? extractIterationSupplement(block.lines).map((line) => `- ${line}`).join('\n')
+                        : 'Iteration-specific execution summary is shown below.'}
+                    />
                   </div>
+                  {topCandidatesByIteration.get(Number(block.iteration))?.length > 0 && (
+                    <div className="mt-3 rounded-md border border-cyan-300/25 bg-cyan-400/[0.07] p-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-cyan-100/90">Top 3 Candidates in this Iteration</p>
+                      <div className="mt-2 space-y-1.5 text-xs">
+                        {topCandidatesByIteration.get(Number(block.iteration)).map((candidate, idx) => (
+                          <div key={`top-iter-${block.iteration}-${idx}`} className="flex items-center justify-between rounded border border-white/10 bg-black/20 px-2.5 py-1.5 text-white/85">
+                            <span>
+                              {idx + 1}. {candidate.formula} ({candidate.score})
+                            </span>
+                            <span className={candidate.isBest || candidate.status === 'winner' ? 'text-emerald-300 font-semibold' : 'text-white/55'}>
+                              {candidate.isBest || candidate.status === 'winner' ? 'Selected path' : 'Branch option'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {parseIneligibleCandidates(block.lines).length > 0 && (
+                    <div className="mt-3 rounded-md border border-rose-400/25 bg-rose-500/[0.07] p-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-rose-100/90">Ineligible Candidates</p>
+                      <div className="mt-2 space-y-1 text-xs text-rose-100/85">
+                        {parseIneligibleCandidates(block.lines).slice(0, 5).map((entry, idx) => (
+                          <p key={`iter-ineligible-${block.iteration}-${idx}`}>
+                            ✗ {entry.formula}: {entry.reason}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {parseIneligibleCandidates(block.lines).length === 0 && (
+                    <div className="mt-3 rounded-md border border-white/10 bg-black/20 px-3 py-2 text-xs text-white/60">
+                      No ineligible candidates in this run.
+                    </div>
+                  )}
                   {candidatesByIteration.get(Number(block.iteration))?.length > 0 && (
                     <div style={{
                       marginTop: 16,

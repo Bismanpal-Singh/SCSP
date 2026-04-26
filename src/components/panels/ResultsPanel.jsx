@@ -10,6 +10,27 @@ function statusBadgeTone(status = '') {
   return 'border-white/20 bg-white/10 text-white/75'
 }
 
+function dedupeIneligible(items = []) {
+  const merged = new Map()
+  items.forEach((entry) => {
+    const formula = String(entry?.formula || '').trim()
+    if (!formula) return
+    const key = formula.toUpperCase()
+    const reason = String(entry?.reason || 'Constraint violation').trim()
+    const existing = merged.get(key)
+    if (!existing) {
+      merged.set(key, { ...entry, formula, reasons: [reason] })
+    } else if (!existing.reasons.includes(reason)) {
+      existing.reasons.push(reason)
+      merged.set(key, existing)
+    }
+  })
+  return Array.from(merged.values()).map((entry) => ({
+    ...entry,
+    reason: entry.reasons.join(' ; '),
+  }))
+}
+
 export default function ResultsPanel({ finalCandidate, portfolio = [], ineligible = [], isRunning = false }) {
   if (!finalCandidate) {
     return (
@@ -18,6 +39,8 @@ export default function ResultsPanel({ finalCandidate, portfolio = [], ineligibl
       </div>
     )
   }
+
+  const dedupedIneligible = dedupeIneligible(ineligible)
 
   return (
     <div className="w-full space-y-5 text-left">
@@ -124,18 +147,18 @@ export default function ResultsPanel({ finalCandidate, portfolio = [], ineligibl
         >
           <p
             className={
-              ineligible.length
+              dedupedIneligible.length
                 ? 'font-mono text-[10px] uppercase tracking-[0.18em] text-rose-100/85'
                 : 'font-mono text-[10px] uppercase tracking-[0.18em] text-white/60'
             }
           >
             Rejected — Ineligible Candidates
           </p>
-          {ineligible.length === 0 ? (
+          {dedupedIneligible.length === 0 ? (
             <p className="mt-2 text-sm text-white/45">No candidates failed hard filters in this run.</p>
           ) : (
             <ul className="mt-3 space-y-2 text-sm">
-              {ineligible.map((entry, idx) => (
+              {dedupedIneligible.map((entry, idx) => (
                 <li
                   key={`${entry.formula}-${idx}`}
                   className="flex gap-3 rounded-lg border border-rose-300/20 bg-black/20 p-3 text-rose-100/90"

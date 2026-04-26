@@ -147,6 +147,7 @@ export default function AgentAtWorkPanel({
   const [visibleLines, setVisibleLines] = useState([])
   const [completedLineIds, setCompletedLineIds] = useState(new Set())
   const [scriptCursor, setScriptCursor] = useState(0)
+  const [showResults, setShowResults] = useState(false)
   const script = useMemo(() => buildScript(iterations, finalCandidate), [iterations, finalCandidate])
   const formulaMpIdMap = useMemo(() => {
     const map = {}
@@ -161,12 +162,14 @@ export default function AgentAtWorkPanel({
     return map
   }, [finalCandidate, iterations])
   const isComplete = Boolean(finalCandidate) && !isRunning
+  const finalLineId = script.at(-1)?.id
 
   useEffect(() => {
     if (script.length === 0) {
       setVisibleLines([])
       setCompletedLineIds(new Set())
       setScriptCursor(0)
+      setShowResults(false)
       return
     }
 
@@ -177,8 +180,24 @@ export default function AgentAtWorkPanel({
       setVisibleLines([])
       setCompletedLineIds(new Set())
       setScriptCursor(0)
+      setShowResults(false)
     }
   }, [script])
+
+  useEffect(() => {
+    if (!isComplete) {
+      setShowResults(false)
+      return undefined
+    }
+
+    // Keep narration visible until the final scripted line has finished typing.
+    if (!finalLineId || !completedLineIds.has(finalLineId)) {
+      return undefined
+    }
+
+    const id = window.setTimeout(() => setShowResults(true), 550)
+    return () => window.clearTimeout(id)
+  }, [completedLineIds, finalLineId, isComplete])
 
   useEffect(() => {
     if (visibleLines.length === 0 && script.length > 0 && scriptCursor === 0) {
@@ -256,7 +275,7 @@ export default function AgentAtWorkPanel({
           {isComplete ? 'Search complete' : 'Agent running'}
         </span>
         <AnimatePresence mode="wait" initial={false}>
-          {isComplete && finalCandidate ? (
+          {showResults && finalCandidate ? (
             <ResultsCard
               finalCandidate={finalCandidate}
               onViewReasoning={onViewReasoning}

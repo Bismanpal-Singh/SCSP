@@ -73,6 +73,7 @@ def clean_terminal_output(text: str) -> str:
         return ""
 
     text = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    text = re.sub(r"[\u2500-\u257f]", "", text)
     text = re.sub(r"[═║╔╗╚╝│┃─━┌┐└┘┤├┬┴┼╠╣╦╩╬]", "", text)
     text = re.sub(r"^[=\-_]{3,}.*$", "", text, flags=re.MULTILINE)
     text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)

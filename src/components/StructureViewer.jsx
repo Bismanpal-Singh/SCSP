@@ -114,7 +114,7 @@ export default function StructureViewer({
       )}
       <div
         ref={containerRef}
-        style={{ width, height }}
+        style={{ width, height, position: 'relative', overflow: 'hidden' }}
         className="rounded-lg border border-violet-400/20 bg-[#0b1325]"
       />
       {showStatusText && loading && <p className="mt-2 font-mono text-[11px] text-white/60">Loading structure...</p>}
