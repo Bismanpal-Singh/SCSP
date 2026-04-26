@@ -294,7 +294,7 @@ def apply_supply_chain_filter(candidates: list[dict]) -> list[dict]:
             # Max risky element dominates, with a small bump for multiple risky elements.
             risk_score = min(100, max(risky) + 8 * max(0, len([r for r in risky if r > 0]) - 1))
         else:
-            risk_score = 5
+            risk_score = 0
         enriched = dict(candidate)
         enriched["supply_chain_risk"] = int(risk_score)
         filtered.append(enriched)

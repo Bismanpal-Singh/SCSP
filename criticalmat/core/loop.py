@@ -84,7 +84,10 @@ def _query_safe_spec(spec: dict) -> dict:
         "Pr",
         "Sm",
         "Gd",
+        "Fe",
         "Co",
+        "Ga",
+        "Cr",
         "Pu",
         "U",
         "Th",
@@ -184,15 +187,30 @@ def sort_eligible_candidates(candidates: list[dict], spec: dict) -> list[dict]:
     return sorted(candidates, key=sort_key, reverse=True)
 
 
-def choose_final_winner(memory_or_result: dict, portfolio: list[dict]) -> dict:
+def choose_final_winner(memory_or_result: dict, portfolio: list[dict], source_candidates: list[dict] | None = None) -> dict:
     if portfolio:
         top = dict(portfolio[0] or {})
         candidate_name = str(top.get("candidate", top.get("formula", "")) or "").strip()
         if candidate_name and not top.get("formula"):
             top["formula"] = candidate_name
+        source_pool = list(source_candidates or [])
+        current_best = dict((memory_or_result or {}).get("current_best", {}) or {})
+        if current_best:
+            source_pool.append(current_best)
+        formula = str(top.get("formula", top.get("candidate", "")) or "").strip()
+        for source in source_pool:
+            if str(source.get("formula", "") or "").strip() == formula:
+                merged = dict(source)
+                merged.update({key: value for key, value in top.items() if value is not None})
+                top = merged
+                break
         scores = dict(top.get("scores", {}) or {})
         if "score" not in top and "overall" in scores:
             top["score"] = int(scores.get("overall", 0) or 0)
+        if "supply_chain_risk" not in top:
+            safety = top.get("supply_chain_score", scores.get("supply_chain_safety"))
+            if safety is not None:
+                top["supply_chain_risk"] = max(0, min(100, 100 - int(float(safety))))
         return top
     return dict((memory_or_result or {}).get("current_best", {}) or {})
 
@@ -350,8 +368,8 @@ def run_agent(
             print_candidate(
                 formula=str(selected_top.get("formula", "unknown")),
                 score=int(selected_top.get("score", 0) or 0),
-                magnetic_moment=float(selected_top.get("magnetic_moment", 0.0) or 0.0),
-                supply_chain_risk=int(selected_top.get("supply_chain_risk", 0) or 0),
+                magnetic_moment=selected_top.get("magnetic_moment"),
+                supply_chain_risk=int(selected_top.get("supply_chain_risk", 0)) if selected_top.get("supply_chain_risk") is not None else None,
                 status="ELIGIBLE" if _is_candidate_eligible(selected_top) else "INELIGIBLE",
                 material_class=material_class,
                 band_gap=selected_top.get("band_gap"),
@@ -404,7 +422,7 @@ def run_agent(
     final_memory = memory.to_dict()
     latest_portfolio = _latest_portfolio(final_memory)
     portfolio_entries = list(latest_portfolio.get("portfolio", []))
-    best_candidate = choose_final_winner(final_memory, portfolio_entries)
+    best_candidate = choose_final_winner(final_memory, portfolio_entries, scored_candidates)
 
     if best_candidate and not _is_candidate_eligible(best_candidate):
         eligible_sorted = [candidate for candidate in scored_candidates if _is_candidate_eligible(candidate)]

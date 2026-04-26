@@ -67,6 +67,24 @@ PRECIOUS_OR_LOW_SCALABILITY_ELEMENTS = {
     "Pt", "Pd", "Rh", "Ir", "Ru", "Os", "Au", "Ag"
 }
 
+ELEMENT_NAME_TO_SYMBOL = {
+    "aluminum": "Al",
+    "aluminium": "Al",
+    "arsenic": "As",
+    "boron": "B",
+    "carbon": "C",
+    "cerium": "Ce",
+    "chromium": "Cr",
+    "cobalt": "Co",
+    "dysprosium": "Dy",
+    "gallium": "Ga",
+    "iron": "Fe",
+    "neodymium": "Nd",
+    "praseodymium": "Pr",
+    "samarium": "Sm",
+    "terbium": "Tb",
+}
+
 def _get_client() -> genai.Client:
     """
     Create a Gemini client using GEMINI_API_KEY from .env.
@@ -206,6 +224,62 @@ def _extract_json(text: str) -> dict[str, Any]:
     return parsed
 
 
+def _extract_explicit_banned_elements(text: str) -> list[str]:
+    """Preserve elements the user explicitly excludes, even if the LLM omits them."""
+    if not text:
+        return []
+
+    found: list[str] = []
+    lower = text.lower()
+    exclusion_patterns = [
+        r"(?:excludes?|excluding|without|no|avoid(?:ing)?|bans?|banned)\s+([^.;:]+)",
+    ]
+    valid_symbols = {
+        "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne",
+        "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar", "K", "Ca",
+        "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn",
+        "Ga", "Ge", "As", "Se", "Br", "Kr", "Rb", "Sr", "Y", "Zr",
+        "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd", "In", "Sn",
+        "Sb", "Te", "I", "Xe", "Cs", "Ba", "La", "Ce", "Pr", "Nd",
+        "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb",
+        "Lu", "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg",
+        "Tl", "Pb", "Bi", "Po", "At", "Rn", "Fr", "Ra", "Ac", "Th",
+        "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf", "Es", "Fm",
+        "Md", "No", "Lr",
+    }
+
+    for pattern in exclusion_patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            phrase = match.group(1)
+            phrase = re.split(
+                r"\b(?:prioritizes?|requires?|minimizes?|maximizes?|seeks?|target(?:s|ing)?|for)\b",
+                phrase,
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )[0]
+            for symbol in re.findall(r"\b[A-Z][a-z]?\b", phrase):
+                if symbol in valid_symbols and symbol not in found:
+                    found.append(symbol)
+
+    for name, symbol in ELEMENT_NAME_TO_SYMBOL.items():
+        if re.search(rf"\b{name}\b", lower) and re.search(
+            rf"(without|no|exclude|excludes|excluding|avoid|avoids|avoiding|ban|banned)\b[^.;:]*\b{name}\b",
+            lower,
+        ):
+            if symbol not in found:
+                found.append(symbol)
+        if re.search(rf"\b{name}\s*-\s*free\b", lower):
+            if symbol not in found:
+                found.append(symbol)
+
+    for symbol in valid_symbols:
+        if re.search(rf"\b{re.escape(symbol)}\s*-\s*free\b", text):
+            if symbol not in found:
+                found.append(symbol)
+
+    return found
+
+
 def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
     """
     Make sure parse_hypothesis always returns the same stable structure.
@@ -247,6 +321,10 @@ def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
         for element in banned_elements
         if str(element).strip()
     ]
+
+    for element in _extract_explicit_banned_elements(str(context)):
+        if element not in banned_elements:
+            banned_elements.append(element)
 
     # Remove duplicates while preserving order.
     allowed_elements = list(dict.fromkeys(allowed_elements))
@@ -481,6 +559,9 @@ def parse_hypothesis(text: str) -> dict:
     try:
         raw_response = _call_model(prompt, temperature=0.1)
         parsed = _extract_json(raw_response)
+        # Always preserve the original user text so explicit exclusions like
+        # "excludes Fe, Co" survive even if the LLM paraphrases the context.
+        parsed["context"] = text
         return _normalize_spec(parsed)
     except Exception as exc:
         print(f"[agent.py warning] Gemini parse failed. Using fallback parser. Reason: {exc}")
@@ -721,7 +802,7 @@ def generate_synthesis_recommendation(candidate: dict) -> str:
         return (
             f"Synthesize {formula} via arc melting of elemental precursors "
             f"followed by annealing at 800°C for 24 hours under argon atmosphere "
-            f"to achieve the desired ordered phase with optimal magnetic properties."
+            f"as a suggested route for producing a sample for further physical validation."
         )
 
 
@@ -1000,6 +1081,22 @@ def generate_lab_ready_portfolio(candidates: list[dict], spec: dict, memory: dic
             "band_gap": entry.get("band_gap"),
             "stability_above_hull": entry.get("stability_above_hull"),
         }
+        for source in top:
+            if str(source.get("formula", "") or "").strip() == str(norm_entry.get("formula", "") or "").strip():
+                for key in (
+                    "magnetic_moment",
+                    "total_magnetization",
+                    "magnetization",
+                    "magnetic_moment_total",
+                    "supply_chain_risk",
+                    "band_gap",
+                    "stability_above_hull",
+                    "elements",
+                    "mp_id",
+                ):
+                    if norm_entry.get(key) is None and source.get(key) is not None:
+                        norm_entry[key] = source.get(key)
+                break
         if not norm_entry["eligible"] or status == "INELIGIBLE":
             continue
         if not _is_class_relevant(norm_entry, material_class):

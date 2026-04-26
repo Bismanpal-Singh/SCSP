@@ -26,7 +26,30 @@ def get_material_class_from_candidate_or_spec(candidate: dict, spec: dict | None
     )
 
 
-def _supply_risk_line(supply_risk: int) -> str:
+def get_candidate_property(candidate: dict, keys: list[str]) -> object:
+    for key in keys:
+        value = candidate.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _supply_chain_risk(candidate: dict) -> int | None:
+    risk = get_candidate_property(candidate, ["supply_chain_risk", "china_dependency"])
+    if risk is not None:
+        return int(float(risk))
+    score = get_candidate_property(candidate, ["supply_chain_score", "supply_chain_safety_score"])
+    scores = dict(candidate.get("scores", {}) or {})
+    if score is None:
+        score = scores.get("supply_chain_safety")
+    if score is not None:
+        return max(0, min(100, 100 - int(float(score))))
+    return None
+
+
+def _supply_risk_line(supply_risk: int | None) -> str:
+    if supply_risk is None:
+        return "N/A"
     return (
         "[green]0% China dependency[/green]"
         if supply_risk == 0
@@ -40,7 +63,7 @@ def format_final_result_fields(candidate: dict, spec: dict | None = None) -> lis
     stability = float(candidate.get("stability_above_hull", 1.0) or 1.0)
     band_gap = candidate.get("band_gap")
     band_gap_text = f"{float(band_gap):.3f} eV" if band_gap is not None else "N/A"
-    supply_risk = int(candidate.get("supply_chain_risk", 0) or 0)
+    supply_risk = _supply_chain_risk(candidate)
     synthesis = str(candidate.get("synthesis_recommendation", "") or "").strip()
     uncertainty = str(candidate.get("main_uncertainty", "N/A"))
     recommended_experiment = str(
@@ -56,7 +79,12 @@ def format_final_result_fields(candidate: dict, spec: dict | None = None) -> lis
     ]
 
     if material_class == "permanent_magnet":
-        fields.insert(1, ("Magnetic moment", f"{float(candidate.get('magnetic_moment', 0.0) or 0.0):.2f} \u03bcB"))
+        magnetic = get_candidate_property(
+            candidate,
+            ["magnetic_moment", "total_magnetization", "magnetization", "magnetic_moment_total"],
+        )
+        magnetic_text = f"{float(magnetic):.2f} \u03bcB" if magnetic is not None else "N/A"
+        fields.insert(1, ("Magnetic moment", magnetic_text))
         fields.append(("Synthesis route", synthesis or "N/A"))
         return fields
 
@@ -200,8 +228,8 @@ def print_reasoning(text: str, iteration: int) -> None:
 def print_candidate(
     formula: str,
     score: int,
-    magnetic_moment: float,
-    supply_chain_risk: int,
+    magnetic_moment: float | None,
+    supply_chain_risk: int | None,
     status: str,
     material_class: str = "unknown",
     band_gap: float | None = None,
@@ -212,7 +240,7 @@ def print_candidate(
     risk_text = (
         f"[green]\u2713 {supply_chain_risk}%[/green]"
         if supply_chain_risk == 0
-        else f"[red]\u26A0 {supply_chain_risk}%[/red]"
+        else f"[red]\u26A0 {supply_chain_risk}%[/red]" if supply_chain_risk is not None else "N/A"
     )
     spec = {"target_props": {"material_class": _normalize_material_class(material_class)}}
     columns = get_candidate_table_columns(spec)
@@ -222,7 +250,7 @@ def print_candidate(
     values = {
         "formula": formula,
         "score": f"[{score_style}]{score}[/{score_style}]",
-        "magnetic_moment": f"{magnetic_moment:.2f}",
+        "magnetic_moment": f"{float(magnetic_moment):.2f}" if magnetic_moment is not None else "N/A",
         "band_gap": f"{float(band_gap):.3f}" if band_gap is not None else "N/A",
         "stability": f"{float(stability_above_hull):.3f}" if stability_above_hull is not None else "N/A",
         "family": str(material_family or "N/A"),
@@ -239,7 +267,7 @@ def print_final_result(candidate: dict, spec: dict | None = None) -> None:
 
     score_color = "green" if score >= 80 else "yellow" if score >= 50 else "red"
     fields = format_final_result_fields(candidate, spec)
-    lines = [f"[bold white]WINNER:[/bold white] [{score_color}]{formula}[/{score_color}]"]
+    lines = [f"[bold white]PROMISING COMPUTATIONAL CANDIDATE:[/bold white] [{score_color}]{formula}[/{score_color}]"]
     for label, value in fields:
         lines.append(f"[bold white]{label}:[/bold white] {value}")
     body = "\n".join(lines)
@@ -275,6 +303,7 @@ def print_portfolio_table(portfolio: list) -> None:
 
     for i, entry in enumerate((portfolio or [])[:5]):
         scores = dict(entry.get("scores", {}) or {})
+        risk = _supply_chain_risk(entry)
         status = str(entry.get("status", "EXPLORE_LATER"))
         color = status_colors.get(status, "white")
         row_style = "bold" if i == 0 else ""
@@ -285,7 +314,7 @@ def print_portfolio_table(portfolio: list) -> None:
             str(scores.get("overall", "")),
             str(scores.get("scientific_fit", "")),
             str(scores.get("stability", "")),
-            str(scores.get("supply_chain_safety", "")),
+            "" if risk is None else str(risk),
             str(scores.get("evidence_confidence", "")),
             style=row_style,
         )

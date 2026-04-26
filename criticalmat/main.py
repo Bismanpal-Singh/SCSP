@@ -7,6 +7,7 @@ import argparse
 from dotenv import load_dotenv
 
 from .core.loop import run_agent
+from .demo import get_candidate_property
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -52,6 +53,19 @@ def _material_class_from_result(result: dict) -> str:
     return str(target_props.get("material_class", "unknown") or "unknown").strip().lower()
 
 
+def _supply_chain_risk(best: dict) -> int | str:
+    risk = get_candidate_property(best, ["supply_chain_risk", "china_dependency"])
+    if risk is not None:
+        return int(float(risk))
+    score = get_candidate_property(best, ["supply_chain_score", "supply_chain_safety_score"])
+    scores = dict(best.get("scores", {}) or {})
+    if score is None:
+        score = scores.get("supply_chain_safety")
+    if score is not None:
+        return max(0, min(100, 100 - int(float(score))))
+    return "N/A"
+
+
 def _print_final_summary(result: dict) -> None:
     best = result.get("best_candidate", {})
     material_class = _material_class_from_result(result)
@@ -70,12 +84,18 @@ def _print_final_summary(result: dict) -> None:
     else:
         stability = f"{float(stability):.3f} eV/atom"
 
-    supply = best.get("supply_chain_risk", best.get("supply_chain_score", "N/A"))
+    supply = _supply_chain_risk(best)
+    supply_text = f"{supply}%" if isinstance(supply, int) else str(supply)
     experiment = best.get("recommended_experiment") or best.get("synthesis_recommendation") or "N/A"
 
     if material_class == "permanent_magnet":
-        print(f"Magnetic moment: {best.get('magnetic_moment', 'N/A')} μB")
-        print(f"Supply chain risk: {supply}% China dependency")
+        magnetic = get_candidate_property(
+            best,
+            ["magnetic_moment", "total_magnetization", "magnetization", "magnetic_moment_total"],
+        )
+        magnetic_text = f"{float(magnetic):.2f} μB" if magnetic is not None else "N/A"
+        print(f"Magnetic moment: {magnetic_text}")
+        print(f"Supply chain risk: {supply_text}")
         print(f"Synthesis route: {experiment}")
     elif material_class == "semiconductor":
         print(f"Band gap: {best.get('band_gap', 'N/A')} eV")
@@ -87,14 +107,14 @@ def _print_final_summary(result: dict) -> None:
         print(f"Corrosion test: {experiment}")
     elif material_class == "battery_material":
         print(f"Stability: {stability}")
-        print(f"Supply chain risk: {supply}")
+        print(f"Supply chain risk: {supply_text}")
         print(f"Cycling/electrochemical test: {experiment}")
     elif material_class == "high_temperature_structural_material":
         print(f"Thermal/stability proxy: {stability}")
         print(f"Oxidation/mechanical test: {experiment}")
     else:
         print(f"Stability: {stability}")
-        print(f"Supply chain risk: {supply}")
+        print(f"Supply chain risk: {supply_text}")
         print(f"Recommended experiment: {experiment}")
 
 

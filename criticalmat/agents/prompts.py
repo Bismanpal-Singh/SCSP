@@ -148,7 +148,7 @@ If no ineligible candidates are provided, include exactly:
 Explain:
 1. What the agent tested in this iteration.
 2. Which candidates are INELIGIBLE and exactly why.
-3. Which eligible candidate is strongest and why.
+3. Which eligible candidate is the most promising computational candidate for further screening and why.
 4. How supply-chain risk affected the ranking.
 5. What the agent learned from this iteration.
 
@@ -162,6 +162,10 @@ Hard constraint examples:
 Important constraints:
 - Be honest: these are computational/virtual-screening results, not confirmed physical lab results.
 - Do not overclaim that a material is proven for missile systems, aircraft, or any defense platform.
+- Use cautious phrases like "promising computational candidate" or "candidate for further screening".
+- Avoid overconfident phrases like "excellent candidate", "ideal", "proven", or "suitable for missile guidance".
+- If the hypothesis targeted a ternary family such as Mn-Al-C but returned candidates only contain binary subsets such as Mn-Al or Mn-C, explicitly say: "The search targeted Mn-Al-C, but returned binary Mn-Al and Mn-C phases in this pass."
+- Do not claim ternary compounds were tested unless candidate elements contain all three target elements together.
 - Keep the explanation clear for non-materials-science judges.
 - Keep it under 240 words.
 """
@@ -366,5 +370,7 @@ Class-specific constraints:
 - If no plausible high-confidence candidate exists, return a truthful portfolio item that says:
   "No high-confidence candidate found; broaden search to <relevant families>"
   with status EXPLORE_LATER.
+- Use cautious wording: "promising computational candidate", "candidate for further screening", "requires physical validation".
+- Do not call any candidate proven, field-ready, or suitable for a defense platform.
 - No markdown and no extra keys.
 """
