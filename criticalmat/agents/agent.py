@@ -39,6 +39,8 @@ DEFAULT_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
 DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud")
 DEFAULT_OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
 _PROVIDER_LOGGED = False
+_FORMULA_VERIFICATION_CACHE: dict[str, dict] = {}
+_PROTOCOLS_IO_SEARCH_CACHE: dict[str, list[dict]] = {}
 VALID_MATERIAL_CLASSES = {
     "permanent_magnet",
     "semiconductor",
@@ -855,6 +857,294 @@ def generate_lab_ready_potential(candidate: dict) -> dict:
         }
 
 
+def _looks_like_exact_formula(formula: str) -> bool:
+    """Return true only for compact chemical formulas, not families/templates."""
+    formula = str(formula or "").strip()
+    if not formula:
+        return False
+    lower = formula.lower()
+    template_tokens = (
+        "based",
+        "system",
+        "family",
+        "template",
+        "candidate",
+        "broaden",
+        "high-confidence",
+        "unknown",
+    )
+    if any(token in lower for token in template_tokens):
+        return False
+    if any(char in formula for char in (" ", "-", "/", ",", ";", ":", "<", ">", "+")):
+        return False
+    return bool(re.fullmatch(r"(?:[A-Z][a-z]?\d*(?:\.\d+)?)+", formula))
+
+
+def _mp_doc_value(doc: Any, key: str) -> Any:
+    if isinstance(doc, dict):
+        return doc.get(key)
+    return getattr(doc, key, None)
+
+
+def verify_formula_in_materials_project(formula: str) -> dict:
+    """
+    Verify an exact formula in Materials Project without affecting ranking.
+
+    Returns only metadata and never raises.
+    """
+    formula = str(formula or "").strip()
+    if not _looks_like_exact_formula(formula):
+        return {
+            "existence_status": "FAMILY_OR_TEMPLATE",
+            "verification_source": "none",
+            "verification_id": None,
+            "verification_note": "Candidate is a family/template rather than an exact chemical formula; skipped exact Materials Project lookup.",
+        }
+
+    if formula in _FORMULA_VERIFICATION_CACHE:
+        return dict(_FORMULA_VERIFICATION_CACHE[formula])
+
+    api_key = os.getenv("MP_API_KEY")
+    if not api_key:
+        result = {
+            "existence_status": "VERIFY_ERROR",
+            "verification_source": "none",
+            "verification_id": None,
+            "verification_note": "MP_API_KEY is not configured; Materials Project verification was skipped.",
+        }
+        _FORMULA_VERIFICATION_CACHE[formula] = result
+        return dict(result)
+
+    try:
+        from mp_api.client import MPRester
+
+        with MPRester(api_key) as mpr:
+            docs = list(
+                mpr.materials.summary.search(
+                    formula=formula,
+                    fields=["material_id", "formula_pretty"],
+                )
+            )
+        if docs:
+            material_id = str(_mp_doc_value(docs[0], "material_id") or "")
+            result = {
+                "existence_status": "VERIFIED_IN_DATABASE",
+                "verification_source": "Materials Project",
+                "verification_id": material_id or None,
+                "verification_note": f"{formula} matched a Materials Project summary entry.",
+            }
+        else:
+            result = {
+                "existence_status": "NOT_FOUND_IN_DATABASE",
+                "verification_source": "Materials Project",
+                "verification_id": None,
+                "verification_note": f"No Materials Project summary entry found for exact formula {formula}.",
+            }
+    except Exception as exc:
+        result = {
+            "existence_status": "VERIFY_ERROR",
+            "verification_source": "Materials Project",
+            "verification_id": None,
+            "verification_note": f"Materials Project verification failed: {exc}",
+        }
+
+    _FORMULA_VERIFICATION_CACHE[formula] = result
+    return dict(result)
+
+
+def verify_top3_formulas(portfolio: list[dict]) -> list[dict]:
+    """Attach Materials Project verification metadata to the top 3 items."""
+    for entry in portfolio[:3]:
+        formula = str(entry.get("formula", entry.get("candidate", "")) or "").strip()
+        entry.update(verify_formula_in_materials_project(formula))
+    return portfolio
+
+
+def build_protocol_queries(candidate: dict, spec: dict) -> list[str]:
+    """Build protocols.io search terms from material class and experiment context."""
+    target_props = dict((spec or {}).get("target_props", {}) or {})
+    material_class = str(target_props.get("material_class", "unknown") or "unknown").strip().lower()
+    formula = str(candidate.get("formula", candidate.get("candidate", "")) or "").strip()
+    family = str(candidate.get("family", candidate.get("material_family", "")) or "").strip()
+    experiment = str(candidate.get("recommended_experiment", "") or "").strip()
+
+    class_templates = {
+        "permanent_magnet": [
+            "XRD phase analysis magnetic alloy",
+            "VSM magnetometry magnetic material",
+            "SQUID magnetometry magnetic characterization",
+            "arc melting alloy synthesis",
+        ],
+        "semiconductor": [
+            "I-V characterization semiconductor",
+            "C-V characterization semiconductor",
+            "radiation testing semiconductor",
+            "DLTS defect spectroscopy",
+        ],
+        "battery_material": [
+            "coin cell assembly cathode",
+            "charge discharge cycling battery",
+            "electrochemical impedance spectroscopy battery",
+            "XRD battery cathode cycling",
+        ],
+        "protective_coating": [
+            "salt spray corrosion testing coating",
+            "electrochemical impedance spectroscopy coating",
+            "scratch adhesion coating",
+            "SEM coating cross section",
+        ],
+        "high_temperature_structural_material": [
+            "thermal cycling ceramic",
+            "oxidation test high temperature alloy",
+            "TGA DSC thermal stability",
+            "hardness testing ceramic",
+        ],
+    }
+
+    queries = [
+        " ".join(part for part in [formula, family, material_class, experiment] if part),
+        " ".join(part for part in [formula, family, material_class] if part),
+    ]
+    queries.extend(class_templates.get(material_class, []))
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for query in queries:
+        cleaned = " ".join(str(query).split())
+        key = cleaned.lower()
+        if cleaned and key not in seen:
+            deduped.append(cleaned)
+            seen.add(key)
+    return deduped[:6]
+
+
+def _protocol_item_text(item: dict, keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = item.get(key)
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def _normalize_protocol_item(item: dict, query: str) -> dict | None:
+    title = _protocol_item_text(item, ("title", "name", "protocol_name"))
+    url = _protocol_item_text(item, ("url", "uri", "protocol_uri", "public_url", "html_url"))
+    if not title or not url or not url.startswith(("http://", "https://")):
+        return None
+    return {
+        "title": title,
+        "url": url,
+        "query": query,
+        "match_type": "protocols.io_search",
+        "confidence": 80,
+    }
+
+
+def search_protocols_io(query: str) -> list[dict]:
+    """
+    Search protocols.io for protocol evidence, not material-property evidence.
+
+    Endpoint details are intentionally isolated here so the API shape can be
+    updated without touching ranking or portfolio logic.
+    """
+    query = " ".join(str(query or "").split())
+    if not query:
+        return []
+    if query in _PROTOCOLS_IO_SEARCH_CACHE:
+        return [dict(item) for item in _PROTOCOLS_IO_SEARCH_CACHE[query]]
+
+    token = os.getenv("PROTOCOLS_IO_TOKEN") or os.getenv("PROTOCOLS_IO_API_KEY")
+    if not token:
+        _PROTOCOLS_IO_SEARCH_CACHE[query] = []
+        return []
+
+    base_url = os.getenv("PROTOCOLS_IO_BASE_URL", "https://www.protocols.io/api/v3").rstrip("/")
+    url = f"{base_url}/protocols"
+    headers = {"Authorization": f"Bearer {token}"}
+    params = {
+        "filter": "public",
+        "key": query,
+        "order_field": "relevance",
+        "order_dir": "desc",
+        "page_size": 5,
+        "page_id": 1,
+        "fields": "title,name,url,uri,protocol_uri,public_url,html_url,id",
+    }
+
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=8)
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        _PROTOCOLS_IO_SEARCH_CACHE[query] = []
+        return []
+
+    raw_items = payload.get("items", []) if isinstance(payload, dict) else []
+    matches: list[dict] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        normalized = _normalize_protocol_item(item, query)
+        if normalized:
+            matches.append(normalized)
+        if len(matches) >= 3:
+            break
+
+    _PROTOCOLS_IO_SEARCH_CACHE[query] = matches
+    return [dict(item) for item in matches]
+
+
+def lookup_protocol_evidence(candidate: dict, spec: dict) -> dict:
+    """Return real protocols.io protocol evidence when available."""
+    queries = build_protocol_queries(candidate, spec)
+    for query in queries:
+        matches = search_protocols_io(query)
+        if matches:
+            confidence = max(int(match.get("confidence", 70) or 70) for match in matches)
+            return {
+                "protocol_evidence": matches,
+                "protocol_confidence": min(90, max(70, confidence)),
+                "protocol_note": f"Matched {len(matches)} public protocols.io protocol result(s) for query: {query}",
+                "query": query,
+            }
+
+    return {
+        "protocol_evidence": [],
+        "protocol_confidence": 0,
+        "protocol_note": "No matching public protocols.io protocol evidence found.",
+        "query": queries[0] if queries else "",
+    }
+
+
+def attach_protocol_evidence_to_top3(portfolio: list[dict], spec: dict) -> list[dict]:
+    """Attach protocol evidence/fallback source metadata to the top 3 items."""
+    for entry in portfolio[:3]:
+        lookup = lookup_protocol_evidence(entry, spec)
+        matches = list(lookup.get("protocol_evidence", []) or [])
+        entry["protocol_evidence"] = matches
+
+        if matches:
+            entry["protocol_confidence"] = int(lookup.get("protocol_confidence", 80) or 80)
+            entry["protocol_note"] = str(lookup.get("protocol_note", "Matched public protocols.io evidence."))
+            entry["recommended_experiment_source"] = "protocols.io"
+            continue
+
+        existence_status = str(entry.get("existence_status", "") or "")
+        if existence_status == "FAMILY_OR_TEMPLATE":
+            entry["protocol_confidence"] = 25
+            entry["protocol_note"] = "Candidate is a family/template; using existing LLM or class-template experiment plan."
+            entry["recommended_experiment_source"] = "class_template"
+        elif existence_status == "VERIFIED_IN_DATABASE":
+            entry["protocol_confidence"] = 45
+            entry["protocol_note"] = "No matching public protocol found; using LLM-generated experiment plan for a Materials Project verified formula."
+            entry["recommended_experiment_source"] = "llm_fallback_verified_formula"
+        else:
+            entry["protocol_confidence"] = 25
+            entry["protocol_note"] = "No matching public protocol found; using LLM-generated experiment plan for an unverified or family-level candidate."
+            entry["recommended_experiment_source"] = "llm_fallback_unverified_formula"
+    return portfolio
+
+
 def generate_lab_ready_portfolio(candidates: list[dict], spec: dict, memory: dict) -> dict:
     """Build ranked 2.0 portfolio with uncertainty and experiment plan."""
     def _material_class() -> str:
@@ -945,6 +1235,14 @@ def generate_lab_ready_portfolio(candidates: list[dict], spec: dict, memory: dic
                     "rationale": note,
                     "status": "EXPLORE_LATER",
                     "eligible": True,
+                    "existence_status": "FAMILY_OR_TEMPLATE",
+                    "verification_source": "none",
+                    "verification_id": None,
+                    "verification_note": "No exact candidate formula was available for Materials Project verification.",
+                    "protocol_evidence": [],
+                    "protocol_confidence": 25,
+                    "protocol_note": "No matching public protocol found; using a class-template experiment plan.",
+                    "recommended_experiment_source": "class_template",
                 }
             ],
             "test_queue": [f"1. {_class_default_experiment(material_class)}"],
@@ -1135,6 +1433,9 @@ def generate_lab_ready_portfolio(candidates: list[dict], spec: dict, memory: dic
             row["status"] = "SAFE_FALLBACK"
         else:
             row["status"] = "EXPLORE_LATER"
+
+    verify_top3_formulas(normalized)
+    attach_protocol_evidence_to_top3(normalized, spec or {})
 
     test_queue = list((portfolio_payload or {}).get("test_queue", []) or [])
     if not test_queue:

@@ -282,11 +282,32 @@ def print_final_result(candidate: dict, spec: dict | None = None) -> None:
     )
 
 
+def _material_source_label(entry: dict) -> str:
+    verification_source = str(entry.get("verification_source", "") or "")
+    existence_status = str(entry.get("existence_status", "") or "")
+    source = str(entry.get("source", "") or "").lower()
+    source_type = str(entry.get("source_type", "") or "")
+    source_type_lower = source_type.lower()
+
+    if verification_source == "Materials Project" or existence_status == "VERIFIED_IN_DATABASE":
+        return "Materials Project"
+    if source_type == "curated_evidence_fallback":
+        return "Curated"
+    if existence_status == "FAMILY_OR_TEMPLATE":
+        return "Template"
+    if "llm" in source or "llm" in source_type_lower:
+        return "LLM"
+    if existence_status == "NOT_FOUND_IN_DATABASE":
+        return "LLM / Unverified"
+    return "Unknown"
+
+
 def print_portfolio_table(portfolio: list) -> None:
     table = Table(title="RANKED MATERIAL PORTFOLIO", show_header=True, header_style="bold white")
     table.add_column("Rank", style="bold", width=6)
     table.add_column("Candidate", width=12)
     table.add_column("Status", width=14)
+    table.add_column("Source", width=16)
     table.add_column("Overall", width=9)
     table.add_column("Sci Fit", width=9)
     table.add_column("Stability", width=10)
@@ -311,6 +332,7 @@ def print_portfolio_table(portfolio: list) -> None:
             str(entry.get("rank", i + 1)),
             str(entry.get("candidate", "")),
             f"[{color}]{status}[/{color}]",
+            _material_source_label(entry),
             str(scores.get("overall", "")),
             str(scores.get("scientific_fit", "")),
             str(scores.get("stability", "")),

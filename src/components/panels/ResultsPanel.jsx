@@ -31,6 +31,29 @@ function dedupeIneligible(items = []) {
   }))
 }
 
+function materialSourceLabel(entry = {}) {
+  const verificationSource = String(entry.verification_source || '')
+  const existenceStatus = String(entry.existence_status || '')
+  const source = String(entry.source || '').toLowerCase()
+  const sourceType = String(entry.source_type || '')
+  const sourceTypeLower = sourceType.toLowerCase()
+
+  if (verificationSource === 'Materials Project' || existenceStatus === 'VERIFIED_IN_DATABASE') return 'Materials Project'
+  if (sourceType === 'curated_evidence_fallback') return 'Curated'
+  if (existenceStatus === 'FAMILY_OR_TEMPLATE') return 'Template'
+  if (source.includes('llm') || sourceTypeLower.includes('llm')) return 'LLM'
+  if (existenceStatus === 'NOT_FOUND_IN_DATABASE') return 'LLM / Unverified'
+  return 'Unknown'
+}
+
+function SourcePill({ label, value }) {
+  return (
+    <span className="rounded-full border border-white/10 bg-white/[0.06] px-2 py-0.5 font-mono text-[10px] text-white/55">
+      {label}: {value}
+    </span>
+  )
+}
+
 export default function ResultsPanel({ finalCandidate, portfolio = [], ineligible = [], isRunning = false }) {
   if (!finalCandidate) {
     return (
@@ -101,6 +124,7 @@ export default function ResultsPanel({ finalCandidate, portfolio = [], ineligibl
                   {portfolio.slice(0, 5).map((entry, index) => {
                     const scores = entry.scores || {}
                     const rowHighlight = index === 0 ? 'bg-emerald-400/[0.06] font-semibold' : ''
+                    const mpId = entry.mpId || entry.mp_id || entry.verification_id
                     return (
                       <tr
                         key={`${entry.rank}-${entry.candidate}-${index}`}
@@ -109,9 +133,19 @@ export default function ResultsPanel({ finalCandidate, portfolio = [], ineligibl
                         <td className="py-2 pr-3 font-mono">{entry.rank ?? index + 1}</td>
                         <td className="py-2 pr-3">
                           {entry.candidate ? (
-                            <MaterialLink mpId={entry.mpId} formula={entry.candidate}>
-                              {entry.candidate}
-                            </MaterialLink>
+                            <div className="space-y-1">
+                              <MaterialLink mpId={mpId} formula={entry.candidate}>
+                                {entry.candidate}
+                              </MaterialLink>
+                              <div className="flex flex-wrap gap-1.5">
+                                <SourcePill label="Source" value={materialSourceLabel(entry)} />
+                                {entry.verification_id && (
+                                  <span className="rounded-full border border-cyan-300/15 bg-cyan-300/[0.06] px-2 py-0.5 font-mono text-[10px] text-cyan-100/60">
+                                    MP: {entry.verification_id}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           ) : '—'}
                         </td>
                         <td className="py-2 pr-3">
