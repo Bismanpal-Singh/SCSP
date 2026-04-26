@@ -115,6 +115,8 @@ def _normalize_candidate(doc: Any) -> dict:
     is_single_element = len(set(elements)) <= 1
     is_solid_likely = not (is_single_element and any(el in NON_SOLID_SINGLE_ELEMENTS for el in elements))
 
+    mp_id = str(_doc_get(doc, "material_id", "unknown"))
+    family = _family_tag(elements)
     return {
         "formula": str(_doc_get(doc, "formula_pretty", "unknown")),
         "magnetic_moment": _extract_magnetic_moment(doc),
@@ -122,10 +124,17 @@ def _normalize_candidate(doc: Any) -> dict:
         "stability_above_hull": _to_float(_doc_get(doc, "energy_above_hull", None), default=1.0),
         "band_gap": _to_float(_doc_get(doc, "band_gap", None), default=0.0),
         "elements": elements,
-        "mp_id": str(_doc_get(doc, "material_id", "unknown")),
+        "element_count": len(set(elements)),
+        "mp_id": mp_id,
         "is_radioactive": is_radioactive,
         "is_solid_likely": is_solid_likely,
-        "family_tag": _family_tag(elements),
+        "is_solid_state_flag": is_solid_likely,
+        "family_tag": family,
+        "material_family_tag": family,
+        "raw_source_metadata": {
+            "mp_id": mp_id,
+            "structure_notes": "MP summary entry for virtual screening candidate.",
+        },
     }
 
 

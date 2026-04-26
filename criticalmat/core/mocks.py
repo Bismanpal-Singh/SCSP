@@ -125,3 +125,31 @@ def generate_next_hypothesis(memory: dict) -> str:
     if len(tried) == 1:
         return "Try cobalt-manganese alloys with reduced rare-earth dependency."
     return "Try manganese-aluminum with light-element doping for higher magnetic moment."
+
+
+def generate_lab_ready_portfolio(candidates: list[dict], spec: dict, memory: dict) -> dict:
+    del spec, memory
+    eligible = [dict(c) for c in candidates if bool(c.get("eligible", True))]
+    eligible.sort(key=lambda c: int(c.get("score", 0)), reverse=True)
+    top = eligible[:3]
+    portfolio = []
+    queue = []
+    for idx, candidate in enumerate(top, start=1):
+        status = "TEST_FIRST" if idx == 1 else ("BACKUP_TEST" if idx == 2 else "SAFE_FALLBACK")
+        formula = str(candidate.get("formula", f"candidate_{idx}"))
+        portfolio.append({"formula": formula, "status": status, "reason": "Mock-ranked by score."})
+        queue.append(
+            {
+                "rank": idx,
+                "formula": formula,
+                "status": status,
+                "experiment": f"Run baseline synthesis and magnetic characterization for {formula}.",
+            }
+        )
+    return {
+        "mission": "Generate a practical magnet test set.",
+        "constraints": {},
+        "portfolio": portfolio,
+        "test_queue": queue,
+        "provenance_tree": {"source": "mock_portfolio"},
+    }

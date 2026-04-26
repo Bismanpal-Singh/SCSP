@@ -26,6 +26,8 @@ from criticalmat.agents.prompts import (
     interpret_results_prompt,
     generate_next_hypothesis_prompt,
     synthesis_recommendation_prompt,
+    lab_ready_potential_prompt,
+    lab_ready_portfolio_prompt,
 )
 
 
@@ -202,6 +204,7 @@ def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
     target_props.setdefault("require_solid_state", True)
     target_props.setdefault("require_practical_materials", True)
     target_props.setdefault("require_manufacturable", True)
+    target_props.setdefault("require_non_toxic", True)
     target_props.setdefault("require_compound", "magnet" in str(target_props.get("material_class", "")).lower())
     target_props.setdefault("avoid_toxic_elements", True)
     target_props.setdefault("avoid_precious_metals", False)
@@ -424,6 +427,11 @@ def parse_hypothesis(text: str) -> dict:
                 "magnetic_moment": {"min": 2.0},
                 "formation_energy": {"max": 0.0},
                 "stability_above_hull": {"max": 0.1},
+                "material_class": "permanent_magnet",
+                "exclude_radioactive": True,
+                "require_solid_state": True,
+                "require_manufacturable": True,
+                "require_non_toxic": True,
             },
             "context": "Rare-earth-free permanent magnet for defense applications",
         }
@@ -539,12 +547,31 @@ def interpret_results(candidates: list, spec: dict, iteration: int) -> str:
         return _call_gemini(prompt, temperature=0.3)
     except Exception as exc:
         print(f"[agent.py warning] Gemini interpretation failed. Using fallback. Reason: {exc}")
-        return (
-            "This iteration identified strong rare-earth-free candidates based on "
-            "magnetic moment and thermodynamic stability. Iron and manganese-based "
-            "compounds show promising properties for defense magnet applications "
-            "with zero critical mineral supply chain dependency."
-        )
+        eligible = [c for c in candidates_sorted if c.get("eligible", False)]
+        ineligible = [c for c in candidates_sorted if not c.get("eligible", False)]
+
+        lines = [
+            "This iteration screened candidates under hard safety, practicality, and supply-chain constraints.",
+            "INELIGIBLE CANDIDATES:",
+        ]
+        if ineligible:
+            for candidate in ineligible[:4]:
+                formula = candidate.get("formula", "unknown")
+                reasons = "; ".join(candidate.get("ineligibility_reasons", [])) or "hard constraints failed"
+                lines.append(f"- {formula}: {reasons}")
+        else:
+            lines.append("- None")
+
+        if eligible:
+            top = eligible[0]
+            lines.append(
+                f"Top eligible candidate is {top.get('formula', 'unknown')} "
+                f"with score {top.get('score', top.get('final_score', 'N/A'))}."
+            )
+        else:
+            lines.append("No eligible candidate passed all hard constraints this round.")
+
+        return " ".join(lines)
     
 def generate_next_hypothesis(memory: dict) -> str:
     """
@@ -600,6 +627,168 @@ def generate_synthesis_recommendation(candidate: dict) -> str:
             f"followed by annealing at 800°C for 24 hours under argon atmosphere "
             f"to achieve the desired ordered phase with optimal magnetic properties."
         )
+
+
+def generate_lab_ready_potential(candidate: dict) -> dict:
+    """
+    Return lab-readiness potential classification.
+
+    Returns:
+    {
+      "status": "high" | "medium" | "low",
+      "summary": str,
+      "reasons": list[str]
+    }
+    """
+    prompt = lab_ready_potential_prompt(candidate or {})
+    try:
+        raw = _call_gemini(prompt, temperature=0.2)
+        parsed = _extract_json(raw)
+        status = str(parsed.get("status", "medium")).strip().lower()
+        if status not in {"high", "medium", "low"}:
+            status = "medium"
+        summary = str(parsed.get("summary", "")).strip() or "Candidate shows moderate lab-readiness potential."
+        reasons_raw = parsed.get("reasons", [])
+        reasons = [str(reason).strip() for reason in reasons_raw if str(reason).strip()] if isinstance(reasons_raw, list) else []
+        if not reasons:
+            reasons = [
+                "Based on predicted stability and composition practicality.",
+                "Requires experimental verification before scale-up.",
+            ]
+        return {"status": status, "summary": summary, "reasons": reasons[:5]}
+    except Exception as exc:
+        print(f"[agent.py warning] Gemini lab-readiness evaluation failed. Using fallback. Reason: {exc}")
+        stability = float((candidate or {}).get("stability_above_hull", 1.0) or 1.0)
+        risk = int((candidate or {}).get("supply_chain_risk", 100) or 100)
+        if stability <= 0.05 and risk <= 10:
+            status = "high"
+        elif stability <= 0.12 and risk <= 40:
+            status = "medium"
+        else:
+            status = "low"
+        formula = str((candidate or {}).get("formula", "candidate"))
+        return {
+            "status": status,
+            "summary": f"{formula} is assessed as {status} lab-ready potential based on current computational evidence.",
+            "reasons": [
+                f"Stability-above-hull observed at {stability:.3f} eV/atom.",
+                f"Supply-chain risk estimated at {risk}%.",
+                "Experimental synthesis and validation are still required.",
+            ],
+        }
+
+
+def generate_lab_ready_portfolio(candidates: list[dict], spec: dict, memory: dict) -> dict:
+    """Build a ranked actionable portfolio for immediate testing."""
+    eligible = [dict(c) for c in (candidates or []) if bool(c.get("eligible", True))]
+    eligible.sort(key=lambda c: int(c.get("score", 0)), reverse=True)
+    top = eligible[:5]
+    prompt = lab_ready_portfolio_prompt(top, spec or {}, memory or {})
+
+    try:
+        raw = _call_gemini(prompt, temperature=0.25)
+        parsed = _extract_json(raw)
+        portfolio = parsed if isinstance(parsed, dict) else {}
+    except Exception as exc:
+        print(f"[agent.py warning] Gemini portfolio generation failed. Using fallback. Reason: {exc}")
+        entries = []
+        queue = []
+        for idx, candidate in enumerate(top[:3], start=1):
+            status = "TEST_FIRST" if idx == 1 else ("BACKUP_TEST" if idx == 2 else "SAFE_FALLBACK")
+            formula = str(candidate.get("formula", f"candidate_{idx}"))
+            entries.append(
+                {
+                    "formula": formula,
+                    "status": status,
+                    "reason": "Ranked by score, stability, and supply-chain practicality.",
+                }
+            )
+            queue.append(
+                {
+                    "rank": idx,
+                    "formula": formula,
+                    "status": status,
+                    "experiment": f"Prepare {formula} by arc melting and anneal to verify phase and magnetization.",
+                }
+            )
+
+        target_props = (spec or {}).get("target_props", {}) or {}
+        portfolio = {
+            "mission": str((spec or {}).get("context", "Identify practical defense-ready candidate.")),
+            "constraints": {
+                "material_class": str(target_props.get("material_class", "unknown")),
+                "exclude_radioactive": bool(target_props.get("exclude_radioactive", True)),
+                "require_solid_state": bool(target_props.get("require_solid_state", True)),
+                "require_manufacturable": bool(target_props.get("require_manufacturable", True)),
+                "require_non_toxic": bool(target_props.get("require_non_toxic", True)),
+            },
+            "portfolio": entries,
+            "test_queue": queue,
+            "provenance_tree": {
+                "source": "criticalmat_agent",
+                "based_on_iteration_count": len((memory or {}).get("scores_by_iteration", {})),
+                "notes": "Fallback portfolio from deterministic ranking.",
+            },
+        }
+
+    # Normalize and guard statuses/shape.
+    valid_status = {"TEST_FIRST", "BACKUP_TEST", "SAFE_FALLBACK"}
+    normalized_entries = []
+    for entry in list((portfolio or {}).get("portfolio", []) or []):
+        formula = str(entry.get("formula", "unknown"))
+        status = str(entry.get("status", "SAFE_FALLBACK")).upper()
+        if status not in valid_status:
+            status = "SAFE_FALLBACK"
+        normalized_entries.append(
+            {
+                "formula": formula,
+                "status": status,
+                "reason": str(entry.get("reason", "Portfolio-ranked candidate.")),
+            }
+        )
+    if not normalized_entries and top:
+        normalized_entries = [
+            {"formula": str(top[0].get("formula", "unknown")), "status": "TEST_FIRST", "reason": "Highest ranked eligible candidate."}
+        ]
+
+    normalized_queue = []
+    for idx, item in enumerate(list((portfolio or {}).get("test_queue", []) or []), start=1):
+        status = str(item.get("status", "SAFE_FALLBACK")).upper()
+        if status not in valid_status:
+            status = "SAFE_FALLBACK"
+        normalized_queue.append(
+            {
+                "rank": int(item.get("rank", idx) or idx),
+                "formula": str(item.get("formula", normalized_entries[min(idx - 1, len(normalized_entries) - 1)]["formula"] if normalized_entries else "unknown")),
+                "status": status,
+                "experiment": str(item.get("experiment", "Run baseline synthesis and characterization.")),
+            }
+        )
+    if not normalized_queue and normalized_entries:
+        normalized_queue = [
+            {
+                "rank": i + 1,
+                "formula": entry["formula"],
+                "status": entry["status"],
+                "experiment": f"Run synthesis and magnetic characterization for {entry['formula']}.",
+            }
+            for i, entry in enumerate(normalized_entries)
+        ]
+
+    target_props = (spec or {}).get("target_props", {}) or {}
+    return {
+        "mission": str((portfolio or {}).get("mission", (spec or {}).get("context", "Defense-ready material discovery"))),
+        "constraints": {
+            "material_class": str((portfolio or {}).get("constraints", {}).get("material_class", target_props.get("material_class", "unknown"))),
+            "exclude_radioactive": bool((portfolio or {}).get("constraints", {}).get("exclude_radioactive", target_props.get("exclude_radioactive", True))),
+            "require_solid_state": bool((portfolio or {}).get("constraints", {}).get("require_solid_state", target_props.get("require_solid_state", True))),
+            "require_manufacturable": bool((portfolio or {}).get("constraints", {}).get("require_manufacturable", target_props.get("require_manufacturable", True))),
+            "require_non_toxic": bool((portfolio or {}).get("constraints", {}).get("require_non_toxic", target_props.get("require_non_toxic", True))),
+        },
+        "portfolio": normalized_entries,
+        "test_queue": normalized_queue,
+        "provenance_tree": dict((portfolio or {}).get("provenance_tree", {"source": "criticalmat_agent", "notes": "Generated portfolio."})),
+    }
 if __name__ == "__main__":
     """
     Local test for Person 2 only.

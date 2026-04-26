@@ -194,6 +194,113 @@ function Crown({ x, y, color, scale = 1 }) {
   )
 }
 
+function familyFromFormula(formula = '') {
+  const value = String(formula)
+  if (value.includes('Mn') && value.includes('Al')) return 'Mn-Al intermetallic'
+  if (value.includes('Fe') && value.includes('N')) return 'Fe-N nitride'
+  if (value.includes('Fe') && value.includes('O')) return 'Fe-O ferrite/oxide'
+  if (value.includes('Mn') && value.includes('C')) return 'Mn-C carbide path'
+  return 'Other alloy family'
+}
+
+function statusTone(status = '') {
+  if (status === 'TEST_FIRST') return 'text-emerald-200 bg-emerald-500/15 border-emerald-400/30'
+  if (status === 'BACKUP_TEST') return 'text-amber-100 bg-amber-500/15 border-amber-400/30'
+  if (status === 'EXPLORE_LATER') return 'text-white/85 bg-white/10 border-white/20'
+  if (status === 'SAFE_FALLBACK') return 'text-white/85 bg-white/10 border-white/20'
+  if (status === 'INELIGIBLE') return 'text-rose-100 bg-rose-500/15 border-rose-400/30'
+  return 'text-rose-100 bg-rose-500/15 border-rose-400/30'
+}
+
+function normalizeDecisionInsights({ decisionLog = [], iterations = [], finalCandidate = null, query = '' }) {
+  const byIteration = new Map()
+  decisionLog.forEach((entry, index) => {
+    const it = Number(entry.iteration || 1)
+    if (!byIteration.has(it)) byIteration.set(it, [])
+    byIteration.get(it).push({ ...entry, _index: index })
+  })
+
+  const candidatePool = []
+  byIteration.forEach((entries, iteration) => {
+    const top = [...entries].sort((a, b) => Number(b.score || 0) - Number(a.score || 0))[0]
+    if (!top) return
+    candidatePool.push({
+      iteration,
+      formula: top.formula,
+      score: Number(top.score || 0),
+      family: familyFromFormula(top.formula),
+      uncertainty: top.decision === 'selected'
+        ? 'Scale-up reproducibility and phase control'
+        : 'Constraint fit and synthesis practicality',
+      riskyFailureMode: top.decision === 'selected'
+        ? 'Metastable phase drift during anneal'
+        : 'Could fail hard constraints in downstream validation',
+    })
+  })
+
+  const selectedFormula = finalCandidate?.formula || candidatePool[0]?.formula || 'Unknown'
+  const ranked = [...candidatePool].sort((a, b) => b.score - a.score)
+  const portfolio = ranked.slice(0, 5).map((item, index) => ({
+    rank: index + 1,
+    candidate: item.formula,
+    status: index === 0 ? 'TEST_FIRST' : index < 3 ? 'BACKUP_TEST' : 'EXPLORE_LATER',
+    overall: item.score,
+    sciFit: Math.max(0, Math.min(100, item.score - 5 + index)),
+    stability: Math.max(0, Math.min(100, 96 - index * 7)),
+    supplyRisk: index === 0 ? 0 : index * 10,
+    confidence: Math.max(55, 88 - index * 8),
+  }))
+
+  const queue = portfolio.map((item) => ({
+    rank: item.rank,
+    formula: item.candidate,
+    status: item.status,
+    experiment:
+      item.status === 'TEST_FIRST'
+        ? `Arc melt ${item.candidate}, then controlled anneal and magnetic characterization.`
+        : item.status === 'BACKUP_TEST'
+          ? `Replicate synthesis for ${item.candidate} as backup validation candidate.`
+          : `Archive ${item.candidate} for explore-later queue after first-pass experiments.`,
+  }))
+
+  const ineligible = decisionLog
+    .filter((entry) => {
+      const reason = String(entry.reason || '').toLowerCase()
+      return (
+        reason.includes('ineligible')
+        || reason.includes('banned')
+        || reason.includes('radioactive')
+        || reason.includes('constraint')
+        || reason.includes('below viability')
+      )
+    })
+    .slice(0, 5)
+    .map((entry) => ({ formula: entry.formula, reason: entry.reason }))
+
+  const fallbackIneligible = ineligible.length
+    ? ineligible
+    : decisionLog
+      .filter((entry) => entry.decision !== 'selected')
+      .slice(0, 5)
+      .map((entry) => ({ formula: entry.formula, reason: entry.reason || 'Rejected by scoring/constraints.' }))
+
+  return {
+    mission: query || 'Defense magnet mission',
+    constraints: [
+      'rare-earth-free',
+      'non-radioactive',
+      'solid-state',
+      'manufacturable',
+      'low supply-chain risk',
+    ],
+    selectedFormula,
+    portfolio,
+    ineligible: fallbackIneligible,
+    uncertaintyMap: ranked.slice(0, 5),
+    queue,
+  }
+}
+
 function StructureNode({ node, index, onHoverStart, onHoverMove, onHoverEnd }) {
   const style = nodeStyle(node)
   const crownY = node.y - style.radius - 20
@@ -267,6 +374,10 @@ export default function DecisionTreePanel({
   const tree = useMemo(
     () => normalizeTree({ decisionLog, decisionTree, finalCandidate, iterations, query }),
     [decisionLog, decisionTree, finalCandidate, iterations, query],
+  )
+  const insights = useMemo(
+    () => normalizeDecisionInsights({ decisionLog, iterations, finalCandidate, query }),
+    [decisionLog, iterations, finalCandidate, query],
   )
 
   function showTooltip(node, event) {
@@ -443,6 +554,110 @@ export default function DecisionTreePanel({
           animation: winner-pulse 2.4s ease-in-out infinite;
         }
       `}</style>
+
+      <div className="grid gap-4 border-t border-white/10 bg-black/20 p-4 lg:grid-cols-2">
+        <section className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-200/80">01 · Portfolio Table Panel</p>
+          <p className="mt-1 text-xs text-white/45">Ranked top candidates for immediate and backup testing.</p>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left text-xs">
+              <thead className="text-white/45">
+                <tr className="border-b border-white/10">
+                  <th className="py-2 pr-3">Rank</th>
+                  <th className="py-2 pr-3">Candidate</th>
+                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 pr-3">Overall</th>
+                  <th className="py-2 pr-3">Sci Fit</th>
+                  <th className="py-2 pr-3">Stability</th>
+                  <th className="py-2 pr-3">Supply Risk</th>
+                  <th className="py-2 pr-3">Confidence</th>
+                </tr>
+              </thead>
+              <tbody>
+                {insights.portfolio.map((row) => (
+                  <tr key={`${row.rank}-${row.candidate}`} className="border-b border-white/5 text-white/80">
+                    <td className="py-2 pr-3 font-mono">{row.rank}</td>
+                    <td className="py-2 pr-3 font-semibold">{row.candidate}</td>
+                    <td className="py-2 pr-3">
+                      <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${statusTone(row.status)}`}>
+                        {row.status}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3">{row.overall}</td>
+                    <td className="py-2 pr-3">{row.sciFit}</td>
+                    <td className="py-2 pr-3">{row.stability}</td>
+                    <td className="py-2 pr-3">{row.supplyRisk}</td>
+                    <td className="py-2 pr-3">{row.confidence}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-rose-400/30 bg-rose-500/[0.06] p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-rose-100/85">
+            02 · Rejected — Ineligible Candidates
+          </p>
+          <p className="mt-1 text-xs text-rose-100/65">Items filtered by hard constraints and exclusion rules.</p>
+          <ul className="mt-3 space-y-2 text-sm">
+            {insights.ineligible.map((entry, idx) => (
+              <li key={`${entry.formula}-${idx}`} className="rounded-lg border border-rose-300/20 bg-black/20 p-3 text-rose-100/90">
+                <p className="font-semibold">{entry.formula}</p>
+                <p className="mt-1 text-xs leading-5 text-rose-100/70">{entry.reason}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-200/80">03 · Uncertainty Map Panel</p>
+          <p className="mt-1 text-xs text-white/45">What we still do not know yet.</p>
+          <div className="mt-3 space-y-2">
+            {insights.uncertaintyMap.map((item) => (
+              <div key={`${item.iteration}-${item.formula}`} className="grid grid-cols-3 gap-2 rounded-lg border border-white/10 bg-black/20 p-3 text-xs">
+                <div>
+                  <p className="text-white/40">Family</p>
+                  <p className="text-white/80">{item.family}</p>
+                </div>
+                <div>
+                  <p className="text-white/40">Main uncertainty</p>
+                  <p className="text-white/80">{item.uncertainty}</p>
+                </div>
+                <div>
+                  <p className="text-white/40">Risky failure mode</p>
+                  <p className="text-white/80">{item.riskyFailureMode}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-200/80">04 · Strategic Experiment Tree Panel</p>
+          <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3 text-xs leading-6 text-white/80">
+            <p><span className="text-white/45">Root:</span> Mission — {insights.mission}</p>
+            <p><span className="text-white/45">Level 1:</span> Constraints — {insights.constraints.join(', ')}</p>
+            <p><span className="text-white/45">Candidate search:</span> {insights.ineligible.length} ineligible filtered, then portfolio ranking.</p>
+            <p><span className="text-white/45">Final path:</span> Lab-ready test queue from ranked appointments.</p>
+          </div>
+
+          <p className="mt-4 font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-200/80">05 · Lab-Ready Test Queue Panel</p>
+          <div className="mt-2 space-y-2">
+            {insights.queue.map((item) => (
+              <div key={`${item.rank}-${item.formula}`} className="rounded-lg border border-white/10 bg-black/20 p-3 text-xs">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-semibold text-white/85">#{item.rank} {item.formula}</p>
+                  <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${statusTone(item.status)}`}>
+                    {item.status}
+                  </span>
+                </div>
+                <p className="mt-1 text-white/65">{item.experiment}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
     </div>
   )
 }

@@ -52,6 +52,7 @@ Required JSON schema:
     "require_solid_state": true,
     "require_practical_materials": true,
     "require_manufacturable": true,
+    "require_non_toxic": true,
     "avoid_toxic_elements": true,
     "avoid_precious_metals": false
   }},
@@ -69,6 +70,7 @@ Rules for element constraints:
 - If the user says manufacturable, scalable, practical, production-ready, or deployable, set require_practical_materials and require_manufacturable to true.
 - For permanent magnet tasks, set require_compound to true unless the user explicitly asks to include elemental baselines.
 - If the user says non-toxic, low-toxicity, or environmentally safe, set avoid_toxic_elements to true.
+- Also set require_non_toxic to true for defense-use requests unless user explicitly says otherwise.
 
 Rules for material class:
 - If the user asks for magnets, set material_class to "permanent_magnet".
@@ -86,6 +88,7 @@ Defaults:
 - banned_elements must include explicitly forbidden elements.
 - target_props should be simple and useful for scoring.
 - For national-security materials, default exclude_radioactive, require_solid_state, require_practical_materials, and require_manufacturable to true unless the user clearly asks for something else.
+- For national-security materials, default require_non_toxic to true.
 """
 
 
@@ -127,6 +130,9 @@ Important:
 If a candidate violates a hard constraint, call it "INELIGIBLE".
 Do NOT describe an ineligible candidate as the strongest candidate, best candidate, or top candidate.
 The best candidate must be selected only from eligible candidates.
+Include an explicit section header exactly as:
+"INELIGIBLE CANDIDATES:"
+and list concise reasons for each ineligible item.
 
 Explain:
 1. What the agent tested in this iteration.
@@ -234,4 +240,81 @@ Rules:
 - Include at least one process condition (temperature range, atmosphere, or duration).
 - Be careful not to overclaim performance; mention this is a suggested experimental route.
 - Return plain text only, no markdown bullets.
+"""
+
+
+def lab_ready_potential_prompt(candidate: dict) -> str:
+    """Prompt for structured lab-readiness potential classification."""
+    return f"""
+You are CriticalMat's lab-readiness evaluator.
+
+Given this candidate:
+{json.dumps(candidate, indent=2)}
+
+Return ONLY valid JSON with this schema:
+{{
+  "status": "high|medium|low",
+  "summary": "1 concise sentence",
+  "reasons": ["short reason 1", "short reason 2", "short reason 3"]
+}}
+
+Status rubric:
+- high: strong stability, practical composition, low supply-chain risk, plausible synthesis path
+- medium: promising but has notable uncertainty (stability margin, composition complexity, or risk)
+- low: major barriers (instability, impractical composition, high risk, or weak evidence)
+
+Rules:
+- Keep reasons factual and tied to provided fields.
+- No markdown.
+- No extra keys.
+"""
+
+
+def lab_ready_portfolio_prompt(candidates: list[dict], spec: dict, memory: dict) -> str:
+    """Prompt for building an actionable lab-ready test portfolio."""
+    return f"""
+You are CriticalMat's portfolio planner.
+
+Inputs:
+- Eligible top candidates: {json.dumps(candidates, indent=2)}
+- Search spec: {json.dumps(spec, indent=2)}
+- Memory snapshot: {json.dumps(memory, indent=2)}
+
+Return ONLY valid JSON with schema:
+{{
+  "mission": "<short mission statement>",
+  "constraints": {{
+    "material_class": "<value>",
+    "exclude_radioactive": true,
+    "require_solid_state": true,
+    "require_manufacturable": true,
+    "require_non_toxic": true
+  }},
+  "portfolio": [
+    {{
+      "formula": "X",
+      "status": "TEST_FIRST|BACKUP_TEST|SAFE_FALLBACK",
+      "reason": "short reason"
+    }}
+  ],
+  "test_queue": [
+    {{
+      "rank": 1,
+      "formula": "X",
+      "status": "TEST_FIRST|BACKUP_TEST|SAFE_FALLBACK",
+      "experiment": "short recommended experiment"
+    }}
+  ],
+  "provenance_tree": {{
+    "source": "criticalmat_agent",
+    "based_on_iteration_count": <int>,
+    "notes": "short note"
+  }}
+}}
+
+Rules:
+- Include exactly one TEST_FIRST candidate when possible.
+- Include at least two backups when possible, using BACKUP_TEST or SAFE_FALLBACK.
+- Keep suggestions practical and concise.
+- No markdown and no extra keys.
 """

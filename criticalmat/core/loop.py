@@ -57,6 +57,37 @@ def _candidate_rejection_reason(candidate: dict) -> str:
     return "; ".join(fallback_reasons) if fallback_reasons else "did not satisfy selection constraints"
 
 
+def _candidate_elements(candidate: dict) -> set[str]:
+    return {str(el).strip() for el in (candidate.get("elements", []) or []) if str(el).strip()}
+
+
+def _apply_hard_eligibility(spec: dict, candidate: dict) -> dict:
+    """Hard constraints: banned elements and radioactive exclusions."""
+    enriched = dict(candidate)
+    reasons = list(enriched.get("ineligibility_reasons", []) or [])
+    elements = _candidate_elements(enriched)
+
+    banned = set(spec.get("banned_elements", []) or [])
+    banned_overlap = sorted(elements & banned)
+    if banned_overlap:
+        reasons.append(f"contains banned element(s): {', '.join(banned_overlap)}")
+
+    target_props = spec.get("target_props", {}) or {}
+    if bool(target_props.get("exclude_radioactive", False)):
+        radioactive_set = {"U", "Th", "Ra", "Po", "Ac", "Pa"}
+        radioactive_overlap = sorted(elements & radioactive_set)
+        if radioactive_overlap:
+            reasons.append(f"contains radioactive element(s): {', '.join(radioactive_overlap)}")
+
+    if reasons:
+        enriched["eligible"] = False
+        enriched["ineligibility_reasons"] = list(dict.fromkeys(reasons))
+    else:
+        enriched.setdefault("eligible", True)
+        enriched.setdefault("ineligibility_reasons", [])
+    return enriched
+
+
 def _query_safe_spec(spec: dict) -> dict:
     """Return a query-safe copy of spec for P1 retrieval compatibility.
 
@@ -109,7 +140,8 @@ def _load_p2_functions():
     interpret_fn = getattr(p2_agent, "interpret_results", None)
     generate_next_fn = getattr(p2_agent, "generate_next_hypothesis", None)
     synthesis_fn = getattr(p2_agent, "generate_synthesis_recommendation", None)
-    return parse_fn, interpret_fn, generate_next_fn, synthesis_fn
+    portfolio_fn = getattr(p2_agent, "generate_lab_ready_portfolio", None)
+    return parse_fn, interpret_fn, generate_next_fn, synthesis_fn, portfolio_fn
 
 
 def _load_fast_candidates(cache_path: str) -> list[dict]:
@@ -123,6 +155,17 @@ def _load_fast_candidates(cache_path: str) -> list[dict]:
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
     return []
+
+
+def _latest_portfolio(memory_dict: dict) -> dict:
+    history = memory_dict.get("portfolio_history", {}) or {}
+    if not isinstance(history, dict) or not history:
+        return {}
+    try:
+        latest_key = max(int(key) for key in history.keys())
+    except Exception:
+        latest_key = max(history.keys())
+    return dict(history.get(latest_key, {}))
 
 
 def run_agent(
@@ -143,6 +186,7 @@ def run_agent(
     min_iterations_before_stop = 2
     fast_candidates = _load_fast_candidates(demo_cache_path) if fast_mode else []
     p2_synthesis_fn = None
+    p2_portfolio_fn = None
 
     print_header(current_hypothesis)
     if fast_mode:
@@ -151,9 +195,10 @@ def run_agent(
         p2_parse_fn = mocks.parse_hypothesis
         p2_interpret_fn = mocks.interpret_results
         p2_next_fn = mocks.generate_next_hypothesis
+        p2_portfolio_fn = getattr(mocks, "generate_lab_ready_portfolio", None)
         if use_real_p2:
             try:
-                parse_fn, interpret_fn, next_fn, synth_fn = _load_p2_functions()
+                parse_fn, interpret_fn, next_fn, synth_fn, portfolio_fn = _load_p2_functions()
                 if callable(parse_fn):
                     p2_parse_fn = parse_fn
                 if callable(interpret_fn):
@@ -162,6 +207,8 @@ def run_agent(
                     p2_next_fn = next_fn
                 if callable(synth_fn):
                     p2_synthesis_fn = synth_fn
+                if callable(portfolio_fn):
+                    p2_portfolio_fn = portfolio_fn
                 elif iteration == 1:
                     print_notice("1) P2 next-hypothesis missing; using mock fallback.", style="yellow")
             except Exception as exc:
@@ -210,10 +257,16 @@ def run_agent(
         for candidate in candidates:
             scored = dict(candidate)
             scored["score"] = p1_score_fn(scored, spec)
+            scored = _apply_hard_eligibility(spec, scored)
             scored_candidates.append(scored)
 
             if not _is_candidate_eligible(scored) or scored["score"] < 50:
                 memory.add_rejection(
+                    scored.get("formula", "unknown"),
+                    _candidate_rejection_reason(scored),
+                )
+            if not _is_candidate_eligible(scored):
+                memory.add_ineligible(
                     scored.get("formula", "unknown"),
                     _candidate_rejection_reason(scored),
                 )
@@ -250,8 +303,24 @@ def run_agent(
         interpretation = p2_interpret_fn(scored_candidates[:5], spec, iteration)
         print_reasoning(interpretation, iteration)
 
+        eligible_top = [candidate for candidate in scored_candidates if _is_candidate_eligible(candidate)][:5]
+        iteration_portfolio = {}
+        if callable(p2_portfolio_fn):
+            iteration_portfolio = p2_portfolio_fn(eligible_top, spec, memory.to_dict()) or {}
+            memory.record_portfolio(iteration, iteration_portfolio)
+
         if iteration >= min_iterations_before_stop and top_score > convergence_score_threshold:
             print_notice(f"Converged: best score exceeded {convergence_score_threshold}.", style="green")
+            break
+        portfolio_entries = list(iteration_portfolio.get("portfolio", []) or [])
+        has_test_first = any(str(entry.get("status", "")).upper() == "TEST_FIRST" for entry in portfolio_entries)
+        backup_count = sum(
+            1
+            for entry in portfolio_entries
+            if str(entry.get("status", "")).upper() in {"BACKUP_TEST", "SAFE_FALLBACK"}
+        )
+        if has_test_first and backup_count >= 2:
+            print_notice("Converged: portfolio has TEST_FIRST plus two viable backups.", style="green")
             break
         if iteration >= min_iterations_before_stop and _has_converged(best_scores):
             print_notice("Converged: score did not improve for two iterations.", style="green")
@@ -279,8 +348,15 @@ def run_agent(
         best_candidate["synthesis_recommendation"] = synthesis
         print_final_result(best_candidate)
 
+    latest_portfolio = _latest_portfolio(final_memory)
     return {
         "final_hypothesis": current_hypothesis,
         "best_candidate": best_candidate,
         "memory": final_memory,
+        "mission": str(latest_portfolio.get("mission", hypothesis)),
+        "constraints": dict(latest_portfolio.get("constraints", {})),
+        "portfolio": list(latest_portfolio.get("portfolio", [])),
+        "ineligible": list(final_memory.get("ineligible_candidates", [])),
+        "test_queue": list(final_memory.get("appointment_queue", [])),
+        "provenance_tree": dict(latest_portfolio.get("provenance_tree", {})),
     }

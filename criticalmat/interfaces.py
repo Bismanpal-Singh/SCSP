@@ -34,3 +34,13 @@ def interpret_results(candidates: list[dict], spec: dict, iteration: int) -> str
 def generate_next_hypothesis(memory: dict) -> str:
     """Generate a plain-English next hypothesis from loop memory."""
     raise NotImplementedError
+
+
+def generate_lab_ready_potential(candidate: dict) -> dict:
+    """Return lab-readiness potential assessment with status and rationale."""
+    raise NotImplementedError
+
+
+def generate_lab_ready_portfolio(candidates: list[dict], spec: dict, memory: dict) -> dict:
+    """Return ranked test-first portfolio with backups and provenance."""
+    raise NotImplementedError
