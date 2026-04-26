@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { runAgent } from '../api/agentClient'
-import { mockDecisionLog, mockFinalCandidate, mockIterations } from '../data/mockData'
+import { mockDecisionLog, mockDecisionTree, mockFinalCandidate, mockIterations } from '../data/mockData'
 import Button from './Button'
 import TabNav from './TabNav'
-import DecisionLogPanel from './panels/DecisionLogPanel'
-import LiveFeedPanel from './panels/LiveFeedPanel'
+import AgentAtWorkPanel from './panels/AgentAtWorkPanel'
+import DecisionTreePanel from './panels/DecisionTreePanel'
 import ResultsPanel from './panels/ResultsPanel'
 
 function InputLeadingIcon() {
@@ -196,6 +196,7 @@ export default function InteractiveInput({ useMock = false }) {
         finalCandidate={finalCandidate}
         isRunning={isRunning}
         iterations={iterations}
+        mockDecisionTree={useMock ? mockDecisionTree : null}
         onReset={handleReset}
         onRetry={handleRetry}
         onTabChange={setActiveTab}
@@ -279,6 +280,7 @@ function ResultsSurface({
   finalCandidate,
   isRunning,
   iterations,
+  mockDecisionTree,
   onReset,
   onRetry,
   onTabChange,
@@ -326,9 +328,25 @@ function ResultsSurface({
 
           <TabNav activeTab={activeTab} onTabChange={onTabChange} />
           <div className="pt-5">
-            {activeTab === 0 && <LiveFeedPanel iterations={iterations} isRunning={isRunning} />}
+            {activeTab === 0 && (
+              <AgentAtWorkPanel
+                finalCandidate={finalCandidate}
+                isRunning={isRunning}
+                iterations={iterations}
+                onViewReasoning={() => onTabChange(2)}
+                onViewResults={() => onTabChange(1)}
+              />
+            )}
             {activeTab === 1 && <ResultsPanel finalCandidate={finalCandidate} />}
-            {activeTab === 2 && <DecisionLogPanel decisionLog={decisionLog} />}
+            {activeTab === 2 && (
+              <DecisionTreePanel
+                decisionLog={decisionLog}
+                decisionTree={mockDecisionTree}
+                finalCandidate={finalCandidate}
+                iterations={iterations}
+                query={query}
+              />
+            )}
           </div>
         </div>
       </div>

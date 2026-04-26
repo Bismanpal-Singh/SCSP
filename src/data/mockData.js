@@ -92,6 +92,54 @@ export const mockLogSummary = {
   convergenceScore: 87,
 }
 
+export const mockDecisionTree = {
+  root: {
+    id: "root",
+    label: "Hypothesis",
+    description: "Magnet without Chinese rare earths",
+  },
+  levels: [
+    {
+      iteration: 1,
+      candidatesTested: 47,
+      bestScore: 34,
+      branchedFrom: "root",
+      candidates: [
+        { id: "smco5",  formula: "SmCo₅",  score: 12, status: "rejected", reason: "Both Sm and Co China-controlled" },
+        { id: "mnbi",   formula: "MnBi",   score: 28, status: "rejected", reason: "Bismuth supply chain risk" },
+        { id: "fe3co",  formula: "Fe₃Co",  score: 34, status: "explored", isBest: true, reason: "Cobalt fails supply chain" },
+        { id: "alnico", formula: "AlNiCo", score: 41, status: "rejected", reason: "Coercivity too low" },
+        { id: "fept",   formula: "FePt",   score: 22, status: "rejected", reason: "Pt from South Africa/Russia" },
+      ],
+    },
+    {
+      iteration: 2,
+      candidatesTested: 31,
+      bestScore: 61,
+      branchedFrom: "fe3co",
+      candidates: [
+        { id: "fe2n", formula: "Fe₂N", score: 33, status: "rejected", reason: "Crystal structure unstable" },
+        { id: "fe8n", formula: "Fe₈N", score: 61, status: "explored", isBest: true, reason: "Thermal stability below spec" },
+        { id: "fe4n", formula: "Fe₄N", score: 45, status: "rejected", reason: "Magnetic moment too low" },
+        { id: "fen",  formula: "FeN",  score: 29, status: "rejected", reason: "Antiferromagnetic" },
+      ],
+    },
+    {
+      iteration: 3,
+      candidatesTested: 22,
+      bestScore: 87,
+      branchedFrom: "fe8n",
+      candidates: [
+        { id: "fe8n2",  formula: "Fe₈N₂",  score: 58, status: "rejected", reason: "Stability still below 350°C" },
+        { id: "fe16n2", formula: "Fe₁₆N₂", score: 87, status: "winner", reason: "Meets all spec — converged" },
+        { id: "fe12n",  formula: "Fe₁₂N",  score: 71, status: "rejected", reason: "Metastable at scale" },
+      ],
+    },
+  ],
+  converged: true,
+  finalWinner: "fe16n2",
+}
+
 // ── App-level state shape ─────────────────────────────────────
 export const mockAppState = {
   isDemo:         true,
@@ -101,5 +149,6 @@ export const mockAppState = {
   iterations:     mockIterations,
   finalCandidate: mockFinalCandidate,
   decisionLog:    mockDecisionLog,
+  decisionTree:   mockDecisionTree,
   logSummary:     mockLogSummary,
 }

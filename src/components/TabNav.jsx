@@ -1,7 +1,7 @@
 import React from 'react'
 
 const TABS = [
-  { label: 'Agent Live Feed',    dot: 'var(--neon)',  num: '01' },
+  { label: 'Agent at Work',      dot: 'var(--neon)',  num: '01' },
   { label: 'Results Dashboard',  dot: 'var(--p2)',    num: '02' },
   { label: 'Agent Decision Log', dot: 'var(--p4)',    num: '03' },
 ]
