@@ -7,6 +7,7 @@ import MaterialLink from '../MaterialLink'
 
 const LINE_REVEAL_DELAY_MS = 120
 const MAX_VISIBLE_LINES = 80
+const MAX_SCRIPT_LINES = 80
 
 function buildScript(iterations, finalCandidate) {
   const base = [
@@ -154,18 +155,6 @@ export default function AgentAtWorkPanel({
   const [scriptCursor, setScriptCursor] = useState(0)
   const [showLogs, setShowLogs] = useState(false)
   const script = useMemo(() => buildScript(iterations, finalCandidate), [iterations, finalCandidate])
-  const formulaMpIdMap = useMemo(() => {
-    const map = {}
-    iterations.forEach((iteration) => {
-      if (iteration?.bestFormula && iteration?.bestCandidate?.mpId) {
-        map[iteration.bestFormula] = iteration.bestCandidate.mpId
-      }
-    })
-    if (finalCandidate?.formula && finalCandidate?.mpId) {
-      map[finalCandidate.formula] = finalCandidate.mpId
-    }
-    return map
-  }, [finalCandidate, iterations])
   const isComplete = Boolean(finalCandidate) && !isRunning
 
   useEffect(() => {
@@ -179,7 +168,6 @@ export default function AgentAtWorkPanel({
       setVisibleLines([])
       setCompletedLineIds(new Set())
       setScriptCursor(0)
-      setShowResults(false)
       return
     }
 
@@ -190,24 +178,8 @@ export default function AgentAtWorkPanel({
       setVisibleLines([])
       setCompletedLineIds(new Set())
       setScriptCursor(0)
-      setShowResults(false)
     }
   }, [script])
-
-  useEffect(() => {
-    if (!isComplete) {
-      setShowResults(false)
-      return undefined
-    }
-
-    // Keep narration visible until the final scripted line has finished typing.
-    if (!finalLineId || !completedLineIds.has(finalLineId)) {
-      return undefined
-    }
-
-    const id = window.setTimeout(() => setShowResults(true), 550)
-    return () => window.clearTimeout(id)
-  }, [completedLineIds, finalLineId, isComplete])
 
   useEffect(() => {
     if (visibleLines.length === 0 && script.length > 0 && scriptCursor === 0) {
