@@ -1,6 +1,9 @@
 import React, { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import DecisionTreeTooltip from './DecisionTreeTooltip'
+import MaterialLink from '../MaterialLink'
+import MaterialDetailModal from '../MaterialDetailModal'
+import MarkdownText from '../MarkdownText'
 
 const VIEWBOX = { width: 1700, height: 850 }
 const ROOT = { id: 'root', x: 850, y: 20, width: 480, height: 56 }
@@ -145,6 +148,7 @@ function normalizeTreeFromProvenance({ provenanceTree, query }) {
         ...ineligible.slice(0, 2).map((item, index) => ({
           id: `ineligible-${index}-${item.formula || 'x'}`,
           formula: item.formula || 'Ineligible',
+          mpId: item.mpId,
           score: 0,
           status: 'rejected',
           isBest: false,
@@ -153,6 +157,7 @@ function normalizeTreeFromProvenance({ provenanceTree, query }) {
         ...portfolio.slice(0, 3).map((item, index) => ({
           id: `portfolio-${index}-${item.candidate || 'x'}`,
           formula: item.candidate || 'Candidate',
+          mpId: item.mpId,
           score: Number(item.rank ? 100 - item.rank * 5 : 80),
           status: item.rank === 1 ? 'winner' : 'explored',
           isBest: item.rank === 1,
@@ -204,8 +209,9 @@ function normalizeTreeFromProvenance({ provenanceTree, query }) {
 
 function sanitizeTranscriptText(text = '') {
   return String(text)
+    .replace(/\r\n/g, '\n')
     .replace(/[╔╗╚╝║╭╮╰╯┏┓┗┛┡┩┠┨┯┷┿┼━─]/g, ' ')
-    .replace(/\s{2,}/g, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
     .trim()
 }
 
@@ -240,6 +246,127 @@ function transcriptSections(text = '') {
   }
   if (current.lines.length) sections.push(current)
   return sections
+}
+
+function formatTranscriptLine(line = '') {
+  const cleaned = String(line)
+    .replace(/\|/g, ' ')
+    .replace(/^[#>\-*\s]+/, '')
+    .replace(/[*#`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return cleaned
+}
+
+function isNoiseLine(line = '') {
+  const value = String(line || '').trim()
+  if (!value) return true
+  if (/^[-=]{3,}$/.test(value)) return true
+  if (/^[|]+$/.test(value)) return true
+  if (/^#{1,6}\s*$/.test(value)) return true
+  return false
+}
+
+function cleanNarrativeLines(lines = []) {
+  return lines
+    .map((line) => formatTranscriptLine(line))
+    .filter((line) => !isNoiseLine(line))
+}
+
+function composeParagraph(lines = []) {
+  return cleanNarrativeLines(lines).join(' ')
+}
+
+function sectionText(lines = []) {
+  return cleanNarrativeLines(lines).join('\n')
+}
+
+const thStyle = {
+  padding: '10px 14px',
+  textAlign: 'left',
+  fontSize: 11,
+  color: 'rgba(167, 139, 250, 0.7)',
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  fontWeight: 600,
+}
+
+const tdStyle = {
+  padding: '10px 14px',
+  color: 'rgba(226, 232, 240, 0.85)',
+}
+
+function scoreColor(score) {
+  const value = Number(score || 0)
+  if (value >= 80) return '#4ade80'
+  if (value >= 50) return '#fbbf24'
+  return '#f87171'
+}
+
+function statusBadgeStyle(status) {
+  const value = String(status || '').toUpperCase()
+  const colors = {
+    ELIGIBLE: { bg: 'rgba(74, 222, 128, 0.12)', fg: '#4ade80', border: 'rgba(74, 222, 128, 0.3)' },
+    WINNER: { bg: 'rgba(74, 222, 128, 0.12)', fg: '#4ade80', border: 'rgba(74, 222, 128, 0.3)' },
+    INELIGIBLE: { bg: 'rgba(248, 113, 113, 0.12)', fg: '#f87171', border: 'rgba(248, 113, 113, 0.3)' },
+    REJECTED: { bg: 'rgba(248, 113, 113, 0.12)', fg: '#f87171', border: 'rgba(248, 113, 113, 0.3)' },
+    PENDING: { bg: 'rgba(251, 191, 36, 0.12)', fg: '#fbbf24', border: 'rgba(251, 191, 36, 0.3)' },
+    EXPLORED: { bg: 'rgba(251, 191, 36, 0.12)', fg: '#fbbf24', border: 'rgba(251, 191, 36, 0.3)' },
+  }
+  const tone = colors[value] || colors.PENDING
+  return {
+    padding: '3px 10px',
+    borderRadius: 4,
+    background: tone.bg,
+    color: tone.fg,
+    border: `1px solid ${tone.border}`,
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: '0.06em',
+  }
+}
+
+function SectionHeader({ tag, title, subtitle }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div
+        style={{
+          fontFamily: 'JetBrains Mono, monospace',
+          fontSize: 11,
+          color: 'rgba(167, 139, 250, 0.85)',
+          letterSpacing: '0.14em',
+          textTransform: 'uppercase',
+          marginBottom: 6,
+        }}
+      >
+        // {tag}
+      </div>
+      <h2
+        style={{
+          fontFamily: 'Inter, sans-serif',
+          fontSize: 22,
+          fontWeight: 700,
+          color: '#fff',
+          margin: 0,
+          letterSpacing: '-0.01em',
+        }}
+      >
+        {title}
+      </h2>
+      {subtitle && (
+        <p
+          style={{
+            fontFamily: 'Inter, sans-serif',
+            fontSize: 13.5,
+            color: 'rgba(148, 163, 184, 0.85)',
+            margin: '4px 0 0 0',
+          }}
+        >
+          {subtitle}
+        </p>
+      )}
+    </div>
+  )
 }
 
 function extractIterationReasoning(text = '') {
@@ -550,7 +677,7 @@ function normalizeDecisionInsights({ decisionLog = [], iterations = [], finalCan
   }
 }
 
-function StructureNode({ node, index, onHoverStart, onHoverMove, onHoverEnd }) {
+function StructureNode({ node, index, onHoverStart, onHoverMove, onHoverEnd, onSelect }) {
   const style = nodeStyle(node)
   const crownY = node.y - style.radius - 20
   const labelY = node.y + style.radius + 18
@@ -591,7 +718,11 @@ function StructureNode({ node, index, onHoverStart, onHoverMove, onHoverEnd }) {
         textAnchor="middle"
         fill={style.label}
         className="font-mono text-[13px]"
-        style={{ textShadow: '0 0 12px rgba(0,0,0,0.9)' }}
+        style={{ textShadow: '0 0 12px rgba(0,0,0,0.9)', cursor: 'pointer' }}
+        onClick={(event) => {
+          event.stopPropagation()
+          onSelect(node)
+        }}
       >
         {node.formula}
       </text>
@@ -626,8 +757,7 @@ export default function DecisionTreePanel({
   const [tooltipNode, setTooltipNode] = useState(null)
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 })
   const [tooltipLocked, setTooltipLocked] = useState(false)
-  const [iterationTooltip, setIterationTooltip] = useState(null)
-  const [iterationTooltipPosition, setIterationTooltipPosition] = useState({ x: 0, y: 0 })
+  const [modalNode, setModalNode] = useState(null)
 
   const tree = useMemo(() => {
     if (provenanceTree) return normalizeTreeFromProvenance({ provenanceTree, query })
@@ -683,10 +813,13 @@ export default function DecisionTreePanel({
   }, [constraints, decisionLog, finalCandidate, ineligible, iterations, portfolio, provenanceTree, query, terminalTranscript, testQueue])
 
   const iterationReasoning = useMemo(() => extractIterationReasoning(terminalTranscript), [terminalTranscript])
-  const reasoningByIteration = useMemo(
-    () => new Map(iterationReasoning.map((block) => [Number(block.iteration), block.lines])),
-    [iterationReasoning],
-  )
+  const candidatesByIteration = useMemo(() => {
+    const map = new Map()
+    tree.levels.forEach((level) => {
+      map.set(Number(level.iteration), level.candidates || [])
+    })
+    return map
+  }, [tree.levels])
 
   function showTooltip(node, event) {
     if (node.status === 'root') return
@@ -703,22 +836,6 @@ export default function DecisionTreePanel({
     window.setTimeout(() => {
       if (!tooltipLocked) setTooltipNode(null)
     }, 80)
-  }
-
-  function showIterationTooltip(iteration, event) {
-    const lines = reasoningByIteration.get(Number(iteration))
-    if (!lines?.length) return
-    setIterationTooltip({ iteration, lines })
-    setIterationTooltipPosition({ x: event.clientX, y: event.clientY })
-  }
-
-  function moveIterationTooltip(iteration, event) {
-    if (!reasoningByIteration.get(Number(iteration))?.length) return
-    setIterationTooltipPosition({ x: event.clientX, y: event.clientY })
-  }
-
-  function hideIterationTooltip() {
-    setIterationTooltip(null)
   }
 
   if (tree.nodes.length <= 1) {
@@ -776,10 +893,7 @@ export default function DecisionTreePanel({
                 width="350"
                 height="46"
                 fill="transparent"
-                style={{ cursor: reasoningByIteration.get(Number(level.iteration))?.length ? 'help' : 'default' }}
-                onMouseEnter={(event) => showIterationTooltip(level.iteration, event)}
-                onMouseMove={(event) => moveIterationTooltip(level.iteration, event)}
-                onMouseLeave={hideIterationTooltip}
+                style={{ cursor: 'default' }}
               />
               <line
                 x1="40"
@@ -862,6 +976,7 @@ export default function DecisionTreePanel({
                 onHoverStart={showTooltip}
                 onHoverMove={moveTooltip}
                 onHoverEnd={hideTooltip}
+                onSelect={setModalNode}
               />
             ))}
         </svg>
@@ -880,30 +995,13 @@ export default function DecisionTreePanel({
           />
         )}
       </AnimatePresence>
-      <AnimatePresence>
-        {iterationTooltip && (
-          <motion.div
-            className="pointer-events-none fixed z-50 max-w-[420px] rounded-lg border border-violet-300/40 bg-[#0a1020]/95 p-3 shadow-[0_12px_40px_rgba(0,0,0,0.45)] backdrop-blur"
-            style={{
-              left: Math.min(iterationTooltipPosition.x + 14, window.innerWidth - 450),
-              top: Math.max(iterationTooltipPosition.y - 16, 16),
-            }}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 4 }}
-            transition={{ duration: 0.16 }}
-          >
-            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-violet-200/90">
-              Iteration {iterationTooltip.iteration} reasoning
-            </p>
-            <div className="mt-2 space-y-1 text-xs leading-5 text-white/80">
-              {iterationTooltip.lines.map((line, idx) => (
-                <p key={`hover-iter-${iterationTooltip.iteration}-${idx}`}>{line}</p>
-              ))}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {modalNode && (
+        <MaterialDetailModal
+          mpId={modalNode.mpId}
+          formula={modalNode.formula}
+          onClose={() => setModalNode(null)}
+        />
+      )}
       <style>{`
         @keyframes winner-pulse {
           0%, 100% { filter: drop-shadow(0 0 16px rgba(0, 245, 212, 0.9)); }
@@ -915,24 +1013,24 @@ export default function DecisionTreePanel({
       `}</style>
 
       {!isRunning && finalCandidate && (
-        <div className="space-y-4 border-t border-white/10 bg-black/20 p-4">
-        <section className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-amber-200/80">What We Still Don&apos;t Know</p>
-          <div className="mt-3 overflow-x-auto">
+        <div className="space-y-5 border-t border-white/10 bg-black/20 p-5">
+        <section className="rounded-xl border border-amber-300/20 bg-white/[0.03] p-5">
+          <p className="font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-amber-200/90">What We Still Don&apos;t Know</p>
+          <div className="mt-4 overflow-x-auto">
             <table className="w-full min-w-[700px] text-left text-xs">
-              <thead className="text-amber-100/70">
+              <thead className="text-amber-100/85">
                 <tr className="border-b border-white/10">
-                  <th className="py-2 pr-3">Material Family</th>
-                  <th className="py-2 pr-3">Main Uncertainty</th>
-                  <th className="py-2 pr-3">Likely Failure Mode</th>
+                  <th className="py-2.5 pr-3 font-semibold">Material Family</th>
+                  <th className="py-2.5 pr-3 font-semibold">Main Uncertainty</th>
+                  <th className="py-2.5 pr-3 font-semibold">Likely Failure Mode</th>
                 </tr>
               </thead>
               <tbody>
                 {insights.uncertaintyMap.map((entry, index) => (
                   <tr key={`${entry.family}-${index}`} className="border-b border-white/5 text-white/80">
-                    <td className="py-2 pr-3 align-top break-words whitespace-pre-wrap">{formatFamilyLabel(entry)}</td>
-                    <td className="py-2 pr-3 align-top break-words whitespace-pre-wrap">{entry.main_uncertainty || '—'}</td>
-                    <td className="py-2 pr-3 align-top break-words whitespace-pre-wrap">{entry.likely_failure_mode || '—'}</td>
+                    <td className="py-2.5 pr-3 align-top break-words whitespace-pre-wrap">{formatFamilyLabel(entry)}</td>
+                    <td className="py-2.5 pr-3 align-top break-words whitespace-pre-wrap">{entry.main_uncertainty || '—'}</td>
+                    <td className="py-2.5 pr-3 align-top break-words whitespace-pre-wrap">{entry.likely_failure_mode || '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -940,59 +1038,62 @@ export default function DecisionTreePanel({
           </div>
         </section>
 
-        <section className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-200/80">Strategic Experiment Tree</p>
-          <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3 text-xs leading-6 text-white/80">
-            <p><span className="text-white/45">Root:</span> Mission — {String(insights.mission || query).slice(0, 60)}</p>
+        <section className="rounded-xl border border-cyan-300/20 bg-white/[0.03] p-5">
+          <p className="font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-200/90">Strategic Experiment Tree</p>
+          <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-4 text-xs leading-6 text-white/80">
+            <p><span className="font-semibold text-white/55">Root:</span> Mission: {String(insights.mission || query).slice(0, 60)}</p>
             <p>
-              <span className="text-white/45">Constraints:</span> {insights.constraints.material_class || 'unknown'} ·{' '}
+              <span className="font-semibold text-white/55">Constraints:</span> {insights.constraints.material_class || 'unknown'} ·{' '}
               {Array.isArray(insights.constraints.banned_elements) ? `${insights.constraints.banned_elements.length} elements banned` : '0 elements banned'} ·{' '}
               exclude_radioactive={String(insights.constraints.exclude_radioactive ?? true)} · require_solid_state={String(insights.constraints.require_solid_state ?? true)}
             </p>
             {Array.isArray(insights.constraints.banned_elements) && insights.constraints.banned_elements.length > 0 && (
-              <div className="mt-2 rounded-md border border-white/10 bg-black/25 px-3 py-2">
-                <p className="text-white/45">Banned elements (full list):</p>
+              <div className="mt-3 rounded-md border border-white/10 bg-black/25 px-3 py-2">
+                <p className="font-semibold text-white/55">Banned elements (full list):</p>
                 <p className="mt-1 whitespace-pre-wrap break-words text-white/75">
                   {insights.constraints.banned_elements.join(', ')}
                 </p>
               </div>
             )}
-            <p><span className="text-white/45">Candidate Search:</span> {(insights.ineligible || []).length} ineligible, {(insights.portfolio || []).length} ranked portfolio nodes.</p>
-            <p><span className="text-white/45">Lab-Ready Test Queue:</span> {(insights.queue || []).length} experiments.</p>
+            <p><span className="font-semibold text-white/55">Candidate Search:</span> {(insights.ineligible || []).length} ineligible, {(insights.portfolio || []).length} ranked portfolio nodes.</p>
+            <p><span className="font-semibold text-white/55">Lab-Ready Test Queue:</span> {(insights.queue || []).length} experiments.</p>
           </div>
           {(insights.ineligible || []).length > 0 && (
-            <div className="mt-3 rounded-lg border border-rose-400/30 bg-rose-500/[0.06] p-3 text-xs text-rose-100/85">
+            <div className="mt-4 rounded-lg border border-rose-400/30 bg-rose-500/[0.06] p-4 text-xs text-rose-100/90">
               {(insights.ineligible || []).map((entry, index) => (
-                <p key={`${entry.formula}-${index}`}>✗ {entry.formula} — {entry.reason}</p>
+                <p key={`${entry.formula}-${index}`}>
+                  ✗ <MaterialLink formula={entry.formula}>{entry.formula}</MaterialLink>: {entry.reason}
+                </p>
               ))}
             </div>
           )}
           {(insights.ineligible || []).length === 0 && (
-            <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-white/60">
+            <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-4 text-xs text-white/60">
               No candidates rejected in this run.
             </div>
           )}
           {(insights.portfolio || []).length > 0 && (
-            <div className="mt-3 space-y-2">
+            <div className="mt-4 space-y-2">
               {(insights.portfolio || []).map((entry, index) => (
-                <div key={`${entry.rank}-${entry.candidate}-${index}`} className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-white/80">
-                  Rank {entry.rank}: {entry.candidate} <span className={`rounded-md border px-2 py-0.5 text-[10px] ${statusTone(entry.status)}`}>{entry.status}</span>
+                <div key={`${entry.rank}-${entry.candidate}-${index}`} className="rounded-lg border border-white/10 bg-black/20 px-3.5 py-2.5 text-xs text-white/80">
+                  Rank {entry.rank}: <MaterialLink formula={entry.candidate}>{entry.candidate}</MaterialLink>{' '}
+                  <span className={`rounded-md border px-2 py-0.5 text-[10px] ${statusTone(entry.status)}`}>{entry.status}</span>
                 </div>
               ))}
             </div>
           )}
         </section>
 
-        <section className="rounded-xl border border-cyan-400/30 bg-cyan-500/[0.06] p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-100/90">
-            Lab-Ready Test Queue — Hand Off to Researchers
+        <section className="rounded-xl border border-cyan-400/30 bg-cyan-500/[0.06] p-5">
+          <p className="font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-100/95">
+            Lab-Ready Test Queue: Hand Off to Researchers
           </p>
           {(insights.queue || []).length === 0 ? (
             <p className="mt-2 text-sm text-cyan-100/65">Test queue will appear after analysis completes.</p>
           ) : (
-            <ol className="mt-3 space-y-2">
+            <ol className="mt-4 space-y-2.5">
               {(insights.queue || []).map((item, index) => (
-                <li key={`${index}-${item}`} className="flex gap-3 rounded-lg border border-cyan-300/20 bg-black/20 p-3 text-sm text-cyan-50/90">
+                <li key={`${index}-${item}`} className="flex gap-3 rounded-lg border border-cyan-300/20 bg-black/20 p-3.5 text-sm text-cyan-50/90">
                   <span className="font-mono font-bold text-cyan-200">{index + 1}.</span>
                   <span>{item}</span>
                 </li>
@@ -1001,19 +1102,19 @@ export default function DecisionTreePanel({
           )}
         </section>
 
-        <section className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-violet-200/80">
-            Full Run Explanation
-          </p>
+        <section className="rounded-xl border border-violet-300/20 bg-white/[0.03] p-5">
+          <SectionHeader
+            tag="run details"
+            title="Full Run Explanation"
+            subtitle="End-to-end narrative of what the agent did and why."
+          />
           {terminalTranscript ? (
-            <div className="mt-3 space-y-3">
+            <div className="mt-4 space-y-3">
               {transcriptSections(terminalTranscript).map((section, index) => (
-                <article key={`${section.title}-${index}`} className="rounded-lg border border-white/10 bg-black/20 p-3">
-                  <h4 className="text-sm font-semibold text-white/85">{section.title}</h4>
-                  <div className="mt-2 space-y-1 text-xs leading-5 text-white/70">
-                    {section.lines.slice(0, 18).map((line, lineIndex) => (
-                      <p key={`${section.title}-${lineIndex}`}>{line}</p>
-                    ))}
+                <article key={`${section.title}-${index}`} className="rounded-lg border border-violet-300/15 bg-[#0b1224]/85 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                  <h4 className="text-sm font-semibold text-white/95">{section.title}</h4>
+                  <div className="mt-2">
+                    <MarkdownText text={sectionText(section.lines.slice(0, 28))} />
                   </div>
                 </article>
               ))}
@@ -1023,27 +1124,95 @@ export default function DecisionTreePanel({
           )}
         </section>
 
-        <section className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-violet-200/80">
-            Iteration Reasoning (Why at each step)
-          </p>
+        <section className="rounded-xl border border-violet-300/20 bg-white/[0.03] p-5">
+          <SectionHeader
+            tag="iteration analysis"
+            title="Iteration Reasoning"
+            subtitle="Step-by-step rationale for each iteration."
+          />
           {iterationReasoning.length ? (
-            <div className="mt-3 space-y-3">
+            <div className="mt-4 space-y-3">
               {iterationReasoning.map((block) => (
-                <article key={`iteration-reasoning-${block.iteration}`} className="rounded-lg border border-white/10 bg-black/20 p-3">
-                  <h4 className="text-sm font-semibold text-white/88">
-                    Iteration {block.iteration}
-                  </h4>
-                  <div className="mt-2 space-y-1 text-xs leading-5 text-white/72">
-                    {block.lines.map((line, idx) => (
-                      <p key={`iter-${block.iteration}-line-${idx}`}>{line}</p>
-                    ))}
+                <article key={`iteration-reasoning-${block.iteration}`} className="rounded-lg border border-cyan-300/20 bg-[#0a1322]/90 p-4 shadow-[0_8px_24px_rgba(0,0,0,0.2)]">
+                  <div style={{
+                    margin: '0 0 12px 0',
+                    paddingTop: 10,
+                    borderTop: '1px solid rgba(167, 139, 250, 0.15)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                  }}
+                  >
+                    <span style={{
+                      fontFamily: 'JetBrains Mono, monospace',
+                      fontSize: 11,
+                      letterSpacing: '0.16em',
+                      color: 'rgba(167, 139, 250, 0.9)',
+                      textTransform: 'uppercase',
+                    }}
+                    >
+                      {`// Iteration ${String(block.iteration).padStart(2, '0')}`}
+                    </span>
+                    <div style={{ flex: 1, height: 1, background: 'rgba(167, 139, 250, 0.1)' }} />
                   </div>
+                  <h4 className="text-sm font-semibold text-cyan-100">Iteration {block.iteration}</h4>
+                  <div className="mt-2">
+                    <MarkdownText text={sectionText(block.lines)} />
+                  </div>
+                  {candidatesByIteration.get(Number(block.iteration))?.length > 0 && (
+                    <div style={{
+                      marginTop: 16,
+                      overflow: 'hidden',
+                      borderRadius: 8,
+                      border: '1px solid rgba(167, 139, 250, 0.15)',
+                    }}
+                    >
+                      <table style={{
+                        width: '100%',
+                        borderCollapse: 'collapse',
+                        fontFamily: 'JetBrains Mono, monospace',
+                        fontSize: 13,
+                      }}
+                      >
+                        <thead>
+                          <tr style={{ background: 'rgba(167, 139, 250, 0.08)' }}>
+                            <th style={thStyle}>Formula</th>
+                            <th style={thStyle}>Score</th>
+                            <th style={thStyle}>Magnetic Moment</th>
+                            <th style={thStyle}>Supply Risk</th>
+                            <th style={thStyle}>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {candidatesByIteration.get(Number(block.iteration)).map((candidate, idx) => (
+                            <tr key={`${block.iteration}-${candidate.formula}-${idx}`} style={{ borderTop: '1px solid rgba(167, 139, 250, 0.08)' }}>
+                              <td style={{ ...tdStyle, fontWeight: 700, color: '#fff' }}>{candidate.formula || 'N/A'}</td>
+                              <td style={{ ...tdStyle, color: scoreColor(candidate.score) }}>{candidate.score ?? 'N/A'}</td>
+                              <td style={tdStyle}>{candidate.magneticMoment ?? 'N/A'}</td>
+                              <td style={tdStyle}>
+                                {candidate.supplyChainRisk === 0 ? '✓ 0%' : (candidate.supplyChainRisk !== undefined ? `⚠ ${candidate.supplyChainRisk}%` : 'N/A')}
+                              </td>
+                              <td style={tdStyle}>
+                                <span style={statusBadgeStyle(candidate.status || 'PENDING')}>{String(candidate.status || 'PENDING').toUpperCase()}</span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {block.iteration === 2 && (
+                    <p className="mt-3 rounded-md border border-amber-300/20 bg-amber-400/[0.08] px-3 py-2 text-xs text-amber-100/85">
+                      Iteration 2 is typically where the agent pivots from initial candidates to focused high-confidence options.
+                    </p>
+                  )}
                 </article>
               ))}
             </div>
           ) : (
-            <p className="mt-2 text-sm text-white/45">Per-iteration reasoning will appear after run completion.</p>
+            <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-4">
+              <p className="text-sm text-white/50">Per-iteration reasoning will appear after run completion.</p>
+            </div>
           )}
         </section>
         </div>

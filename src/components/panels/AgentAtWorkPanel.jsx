@@ -3,26 +3,32 @@ import { AnimatePresence, motion } from 'framer-motion'
 import Button from '../Button'
 import NarrationLine from './AgentAtWorkPanel/NarrationLine'
 import { narrateFinal, narrateIteration, narrationTone } from './AgentAtWorkPanel/narrate'
+import MaterialLink from '../MaterialLink'
 
 const TYPE_DELAY_MS = 30
 const MAX_VISIBLE_LINES = 6
+const MAX_SCRIPT_LINES = 10
 
 function buildScript(iterations, finalCandidate) {
-  const lines = [
+  const base = [
     {
       id: 'start-reading',
-      text: 'Reading your hypothesis…',
+      text: 'Reading your hypothesis...',
       tone: 'default',
     },
     {
       id: 'start-database',
-      text: 'Searching 150,000 materials in the Materials Project database…',
+      text: 'Searching 150,000 materials in the Materials Project database...',
       tone: 'default',
     },
   ]
 
+  const lines = [...base]
   iterations.forEach((iteration, index) => {
-    narrateIteration(iteration, index === 0, iterations[index - 1]).forEach((text, lineIndex) => {
+    if (lines.length >= MAX_SCRIPT_LINES - (finalCandidate ? 1 : 0)) return
+    const iterationLines = narrateIteration(iteration, index === 0, iterations[index - 1]).slice(0, 2)
+    iterationLines.forEach((text, lineIndex) => {
+      if (lines.length >= MAX_SCRIPT_LINES - (finalCandidate ? 1 : 0)) return
       lines.push({
         id: `iter-${iteration.num}-${lineIndex}`,
         text,
@@ -33,11 +39,13 @@ function buildScript(iterations, finalCandidate) {
 
   if (finalCandidate) {
     narrateFinal(finalCandidate).forEach((text, index) => {
-      lines.push({
-        id: `final-${index}`,
-        text,
-        tone: narrationTone(text),
-      })
+      if (lines.length < MAX_SCRIPT_LINES) {
+        lines.push({
+          id: `final-${index}`,
+          text,
+          tone: narrationTone(text),
+        })
+      }
     })
   }
 
@@ -87,7 +95,11 @@ function ResultsCard({ finalCandidate, onViewReasoning, onViewResults }) {
         <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-4">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <p className="font-mono text-3xl font-bold text-white">{finalCandidate.formula}</p>
+              <p className="font-mono text-3xl font-bold text-white">
+                <MaterialLink mpId={finalCandidate.mpId} formula={finalCandidate.formula}>
+                  {finalCandidate.formula}
+                </MaterialLink>
+              </p>
               {finalCandidate.fullName && (
                 <p className="mt-1 text-sm text-white/48">{finalCandidate.fullName}</p>
               )}
@@ -136,6 +148,18 @@ export default function AgentAtWorkPanel({
   const [completedLineIds, setCompletedLineIds] = useState(new Set())
   const [scriptCursor, setScriptCursor] = useState(0)
   const script = useMemo(() => buildScript(iterations, finalCandidate), [iterations, finalCandidate])
+  const formulaMpIdMap = useMemo(() => {
+    const map = {}
+    iterations.forEach((iteration) => {
+      if (iteration?.bestFormula && iteration?.bestCandidate?.mpId) {
+        map[iteration.bestFormula] = iteration.bestCandidate.mpId
+      }
+    })
+    if (finalCandidate?.formula && finalCandidate?.mpId) {
+      map[finalCandidate.formula] = finalCandidate.mpId
+    }
+    return map
+  }, [finalCandidate, iterations])
   const isComplete = Boolean(finalCandidate) && !isRunning
 
   useEffect(() => {
@@ -214,11 +238,10 @@ export default function AgentAtWorkPanel({
       <div className="mb-3">
         <div>
           <p className="text-sm font-semibold text-white/86">Agent at Work</p>
-          <p className="mt-0.5 text-xs text-white/38">A plain-English narration of the search as it runs.</p>
         </div>
       </div>
 
-      <section className="relative max-h-[60vh] min-h-[280px] overflow-y-auto rounded-2xl border border-white/10 bg-[var(--surface)] px-8 py-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+      <section className="relative h-[420px] overflow-hidden rounded-2xl border border-white/10 bg-[var(--surface)] px-8 py-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
         <span
           className={[
             'absolute right-4 top-4 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors',
@@ -253,22 +276,25 @@ export default function AgentAtWorkPanel({
           ) : (
             <motion.div
               key="narration"
-              className="flex flex-col justify-start gap-3 pr-28"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              className="h-full overflow-y-auto pr-28"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.6 }}
             >
-              <AnimatePresence initial={false}>
-                {visibleLines.map((line, index) => (
-                  <NarrationLine
-                    key={line.id}
-                    isActive={index === visibleLines.length - 1 && !completedLineIds.has(line.id)}
-                    text={line.renderedText}
-                    tone={line.tone}
-                  />
-                ))}
-              </AnimatePresence>
+              <div className="flex flex-col justify-start gap-3">
+                <AnimatePresence initial={false}>
+                  {visibleLines.map((line, index) => (
+                    <NarrationLine
+                      key={line.id}
+                      isActive={index === visibleLines.length - 1 && !completedLineIds.has(line.id)}
+                      text={line.renderedText}
+                      tone={line.tone}
+                      formulaMpIdMap={formulaMpIdMap}
+                    />
+                  ))}
+                </AnimatePresence>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

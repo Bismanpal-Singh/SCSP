@@ -2,9 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 
 const SHATTER_START_MS = 3700
-const SHATTER_ANIMATION_S = 3.2
-const SHATTER_MAX_DELAY_S = 0.42
-const OVERLAY_FADE_S = 0.45
+const SHATTER_ANIMATION_S = 0.5
+const SHATTER_MAX_DELAY_S = 0.12
+const OVERLAY_FADE_S = 0.3
 const INTRO_COMPLETE_MS = SHATTER_START_MS + (SHATTER_ANIMATION_S + SHATTER_MAX_DELAY_S) * 1000 + 80
 const UNMOUNT_MS = INTRO_COMPLETE_MS + OVERLAY_FADE_S * 1000
 

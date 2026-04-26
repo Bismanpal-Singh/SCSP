@@ -1,4 +1,5 @@
 import React from 'react'
+import MaterialLink from '../MaterialLink'
 
 function statusBadgeTone(status = '') {
   if (status === 'TEST_FIRST') return 'border-emerald-400/30 bg-emerald-500/15 text-emerald-100'
@@ -25,7 +26,9 @@ export default function ResultsPanel({ finalCandidate, portfolio = [], ineligibl
           Top candidate
         </p>
         <h3 className="mt-2 bg-gradient-to-r from-violet-200 to-indigo-200 bg-clip-text text-3xl font-bold tracking-tight text-transparent">
-          {finalCandidate.formula}
+          <MaterialLink mpId={finalCandidate.mpId} formula={finalCandidate.formula}>
+            {finalCandidate.formula}
+          </MaterialLink>
         </h3>
         {finalCandidate.fullName && (
           <p className="mt-1 text-sm text-white/60">{finalCandidate.fullName}</p>
@@ -84,7 +87,13 @@ export default function ResultsPanel({ finalCandidate, portfolio = [], ineligibl
                         className={`border-b border-white/5 text-white/80 ${rowHighlight}`}
                       >
                         <td className="py-2 pr-3 font-mono">{entry.rank ?? index + 1}</td>
-                        <td className="py-2 pr-3">{entry.candidate || '—'}</td>
+                        <td className="py-2 pr-3">
+                          {entry.candidate ? (
+                            <MaterialLink mpId={entry.mpId} formula={entry.candidate}>
+                              {entry.candidate}
+                            </MaterialLink>
+                          ) : '—'}
+                        </td>
                         <td className="py-2 pr-3">
                           <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${statusBadgeTone(entry.status)}`}>
                             {entry.status || '—'}
@@ -133,7 +142,13 @@ export default function ResultsPanel({ finalCandidate, portfolio = [], ineligibl
                 >
                   <span className="mt-0.5 text-rose-300">✗</span>
                   <div>
-                    <p className="font-semibold">{entry.formula || 'Unknown'}</p>
+                    <p className="font-semibold">
+                      {entry.formula ? (
+                        <MaterialLink mpId={entry.mpId} formula={entry.formula}>
+                          {entry.formula}
+                        </MaterialLink>
+                      ) : 'Unknown'}
+                    </p>
                     <p className="mt-1 text-xs leading-5 text-rose-100/70">{entry.reason || 'Constraint violation'}</p>
                   </div>
                 </li>

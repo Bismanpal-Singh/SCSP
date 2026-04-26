@@ -3,16 +3,16 @@ import SectionShell from './SectionShell'
 
 const blocks = [
   {
-    title: 'Autonomous discovery loop',
-    body: 'Mantle AI proposes hypotheses, runs virtual experiments, and refines candidates without manual iteration — closing the loop from goal to shortlist.',
+    title: 'Autonomous Discovery Loop',
+    body: 'Mantle AI translates mission intent into machine-readable constraints, ranks candidate materials with multi-objective scoring, and iterates hypotheses with traceable reasoning from each run.',
   },
   {
-    title: 'Materials data integration',
-    body: 'Grounded in structured materials knowledge: compositions, properties, and stability signals inform every step of the search.',
+    title: 'Materials Intelligence Stack',
+    body: 'The system combines crystal structure, thermodynamic stability, magnetic indicators, and supply-chain constraints so every recommendation is grounded in measurable evidence.',
   },
   {
-    title: 'Optimization engine',
-    body: 'Multi-objective scoring steers the agent toward practical compositions: stability, target properties, and process-aware constraints.',
+    title: 'Decision-Ready Optimization',
+    body: 'Portfolio outputs include ranked candidates, explicit rejection reasons, uncertainty mapping, and an ordered experiment queue that researchers can execute immediately.',
   },
 ]
 

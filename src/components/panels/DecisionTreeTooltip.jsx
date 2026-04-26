@@ -1,5 +1,6 @@
 import React from 'react'
 import { motion } from 'framer-motion'
+import StructureViewer from '../StructureViewer'
 
 function statusLabel(node) {
   if (node.status === 'winner') return 'Winner'
@@ -32,10 +33,14 @@ function Property({ label, value }) {
 export default function DecisionTreeTooltip({ node, position, onMouseEnter, onMouseLeave }) {
   if (!node) return null
 
-  const flipLeft = position.x > window.innerWidth - 420
-  const left = flipLeft ? position.x - 380 : position.x + 18
-  const top = Math.min(position.y + 12, window.innerHeight - 330)
+  const tooltipWidth = 480
+  const tooltipHeight = 470
+  const desiredLeft = position.x + 18
+  const desiredTop = position.y + 12
+  const left = Math.max(12, Math.min(desiredLeft, window.innerWidth - tooltipWidth - 12))
+  const top = Math.max(12, Math.min(desiredTop, window.innerHeight - tooltipHeight - 12))
   const scoreWidth = `${Math.min(100, Math.max(0, (Number(node.score || 0) / 80) * 100))}%`
+  const mpUrl = node.mpId ? `https://next-gen.materialsproject.org/materials/${node.mpId}` : null
 
   return (
     <motion.div
@@ -45,10 +50,10 @@ export default function DecisionTreeTooltip({ node, position, onMouseEnter, onMo
       transition={{ duration: 0.2 }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      className="fixed z-50 w-[360px] rounded-2xl border border-cyan-300/30 bg-[var(--surface)] p-4 text-left shadow-[0_18px_55px_rgba(0,0,0,0.45),0_0_24px_rgba(34,211,238,0.12)]"
+      className="fixed z-50 w-[480px] rounded-2xl border border-cyan-300/30 bg-[var(--surface)] p-4 text-left shadow-[0_18px_55px_rgba(0,0,0,0.45),0_0_24px_rgba(34,211,238,0.12)]"
       style={{ left, top }}
     >
-      <div className="grid grid-cols-[1fr_90px] gap-4">
+      <div className="grid grid-cols-[1fr_170px] gap-4">
         <div className="min-w-0">
           <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-cyan-100/55">
             Iteration {node.iteration}
@@ -69,8 +74,15 @@ export default function DecisionTreeTooltip({ node, position, onMouseEnter, onMo
           <p className="mt-1 text-[10px] text-white/35">Convergence threshold: 80</p>
         </div>
 
-        <div className="flex h-[90px] w-[90px] items-center justify-center rounded-xl border border-cyan-300/15 bg-cyan-300/[0.04]">
-          <div className="h-12 w-12 animate-spin rounded-full border border-cyan-200/20 border-t-cyan-200/70" />
+        <div className="rounded-xl border border-cyan-300/15 bg-cyan-300/[0.04] p-2">
+          <StructureViewer
+            mpId={node.mpId}
+            formula={node.formula}
+            width={154}
+            height={154}
+            showName={false}
+            showStatusText={false}
+          />
         </div>
       </div>
 
@@ -86,6 +98,16 @@ export default function DecisionTreeTooltip({ node, position, onMouseEnter, onMo
         <Property label="Supply risk" value={node.supplyChainRisk} />
         <Property label="MP ID" value={node.mpId} />
       </div>
+      {mpUrl && (
+        <a
+          href={mpUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-4 inline-flex items-center rounded-md border border-cyan-300/30 bg-cyan-300/[0.08] px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/[0.14]"
+        >
+          Open on Materials Project ↗
+        </a>
+      )}
     </motion.div>
   )
 }
