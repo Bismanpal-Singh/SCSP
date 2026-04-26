@@ -94,6 +94,22 @@ _ELEMENT_SYMBOL_RE = re.compile(r"^[A-Z][a-z]?$")
 _FORMULA_TOKEN_RE = re.compile(r"\b(?:[A-Z][a-z]?\d*){2,}\b")
 
 
+def _context_requests_toxic_avoidance(text: str) -> bool:
+    """Enable toxic-element avoidance only when user intent is explicit."""
+    lower = str(text or "").lower()
+    phrases = (
+        "non-toxic",
+        "nontoxic",
+        "low-toxicity",
+        "low toxicity",
+        "avoid toxic",
+        "avoid toxicity",
+        "toxicity",
+        "environmentally safe",
+    )
+    return any(phrase in lower for phrase in phrases)
+
+
 def _normalize_followup_payload(payload: dict[str, Any]) -> dict[str, Any]:
     family_alias = {
         "oxides": "oxide",
@@ -577,9 +593,9 @@ def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
     target_props.setdefault("require_solid_state", True)
     target_props.setdefault("require_practical_materials", True)
     target_props.setdefault("require_manufacturable", True)
-    target_props.setdefault("require_non_toxic", True)
+    target_props.setdefault("require_non_toxic", _context_requests_toxic_avoidance(str(context)))
     target_props.setdefault("require_compound", "magnet" in str(target_props.get("material_class", "")).lower())
-    target_props.setdefault("avoid_toxic_elements", True)
+    target_props.setdefault("avoid_toxic_elements", _context_requests_toxic_avoidance(str(context)))
     target_props.setdefault("avoid_precious_metals", False)
     target_props.setdefault("mp_screen_fetch_limit", 100)
     target_props["preferred_families"] = list(dict.fromkeys(preferred_families))
@@ -597,7 +613,7 @@ def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
                 banned_elements.append(element)
 
     # If avoid toxic elements is true, add problematic elements to banned list.
-    if target_props.get("avoid_toxic_elements"):
+    if bool(target_props.get("avoid_toxic_elements")):
         for element in sorted(HIGH_TOXICITY_OR_PROBLEMATIC_ELEMENTS):
             if element not in banned_elements:
                 banned_elements.append(element)
@@ -692,9 +708,10 @@ def _fallback_parse_hypothesis(text: str) -> dict[str, Any]:
             "nontoxic",
             "low-toxicity",
             "low toxicity",
+            "avoid toxic",
+            "avoid toxicity",
+            "toxicity",
             "environmentally safe",
-            "safe",
-            "deployable",
         ]
     )
 
@@ -850,7 +867,7 @@ def _annotate_candidate_eligibility(candidate: dict, spec: dict) -> dict:
         if radioactive_overlap:
             reasons.append(f"contains radioactive element(s): {', '.join(radioactive_overlap)}")
 
-    if target_props.get("avoid_toxic_elements", True):
+    if target_props.get("avoid_toxic_elements", False):
         toxic_overlap = sorted(elements & HIGH_TOXICITY_OR_PROBLEMATIC_ELEMENTS)
         if toxic_overlap:
             reasons.append(f"contains high-toxicity/problematic element(s): {', '.join(toxic_overlap)}")

@@ -52,8 +52,8 @@ Required JSON schema:
     "require_solid_state": true,
     "require_practical_materials": true,
     "require_manufacturable": true,
-    "require_non_toxic": true,
-    "avoid_toxic_elements": true,
+    "require_non_toxic": false,
+    "avoid_toxic_elements": false,
     "avoid_precious_metals": false
   }},
   "context": "Short explanation of what the user is trying to achieve.",
@@ -69,8 +69,8 @@ Rules for element constraints:
 - If the user says solid-state, bulk material, ceramic, alloy, or crystal, set require_solid_state to true.
 - If the user says manufacturable, scalable, practical, production-ready, or deployable, set require_practical_materials and require_manufacturable to true.
 - For permanent magnet tasks, set require_compound to true unless the user explicitly asks to include elemental baselines.
-- If the user says non-toxic, low-toxicity, or environmentally safe, set avoid_toxic_elements to true.
-- Also set require_non_toxic to true for defense-use requests unless user explicitly says otherwise.
+- If the user says non-toxic, low-toxicity, avoid toxicity, or environmentally safe, set avoid_toxic_elements to true.
+- Set require_non_toxic to true only when toxicity constraints are explicitly requested.
 
 Rules for material class:
 - If the user asks for magnets, set material_class to "permanent_magnet".
@@ -94,7 +94,7 @@ Defaults:
 - banned_elements must include explicitly forbidden elements.
 - target_props should be simple and useful for scoring.
 - For national-security materials, default exclude_radioactive, require_solid_state, require_practical_materials, and require_manufacturable to true unless the user clearly asks for something else.
-- For national-security materials, default require_non_toxic to true.
+- Do not default toxicity constraints to true unless explicitly requested by the user.
 """
 
 

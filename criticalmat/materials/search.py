@@ -763,7 +763,16 @@ def get_candidates(
     docs = _fetch_docs(api_key, primary_allowed, banned_elements, fetch_n)
     if _magnet_task(target_props) and len(allowed_elements) >= 2:
         docs = docs + _fetch_docs_by_chemsys(api_key, allowed_elements, banned_elements, fetch_n)
-    normalized = [_normalize_candidate(doc) for doc in docs]
+    deduped_docs: list[Any] = []
+    seen_doc_ids: set[str] = set()
+    for doc in docs:
+        material_id = str(_doc_get(doc, "material_id", ""))
+        if material_id and material_id in seen_doc_ids:
+            continue
+        if material_id:
+            seen_doc_ids.add(material_id)
+        deduped_docs.append(doc)
+    normalized = [_normalize_candidate(doc) for doc in deduped_docs]
     normalized = _filter_by_allowed_any(normalized, allowed_elements)
 
     # For magnet tasks, widen once if we still have no multi-element chemistry.
@@ -784,6 +793,18 @@ def get_candidates(
         ]
 
     viable = _apply_viability_filters(normalized, target_props)
+    # Low-yield rescue pass: broaden retrieval window once before returning empty.
+    # This helps agentic iterations avoid "zero candidates" stalls.
+    if len(viable) < max(1, min(3, final_limit // 4)):
+        rescue_n = min(SCREEN_FETCH_MAX, max(fetch_n * 3, 240))
+        rescue_docs = _fetch_docs(api_key, [], banned_elements, rescue_n)
+        rescue_normalized = _filter_by_allowed_any(
+            [_normalize_candidate(doc) for doc in rescue_docs],
+            allowed_elements,
+        )
+        rescue_viable = _apply_viability_filters(rescue_normalized, target_props)
+        if len(rescue_viable) > len(viable):
+            viable = rescue_viable
     enriched = apply_supply_chain_filter(viable)
     ranked = _rank_candidates(enriched, target_props)
     diversified = _diversify_candidates(ranked, final_limit)

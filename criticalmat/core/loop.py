@@ -171,7 +171,7 @@ def get_material_class(spec: dict) -> str:
 
 
 def _preserve_original_material_context(spec: dict, original_spec: dict | None) -> dict:
-    """Prevent later generated hypotheses from drifting into a different material class."""
+    """Keep original material class while preserving iteration-specific refinements."""
     if not original_spec:
         return spec
     original_class = get_material_class(original_spec)
@@ -182,8 +182,9 @@ def _preserve_original_material_context(spec: dict, original_spec: dict | None) 
     target_props = dict(preserved.get("target_props", {}) or {})
     parsed_class = str(target_props.get("material_class", "unknown") or "unknown").strip().lower()
     if parsed_class != original_class:
-        preserved = dict(original_spec)
-        preserved["context"] = (spec or {}).get("context", preserved.get("context", ""))
+        # Do not discard newly parsed element/family constraints; only pin class.
+        target_props["material_class"] = original_class
+        preserved["target_props"] = target_props
     return preserved
 
 
@@ -385,6 +386,7 @@ def run_agent(
     latest_spec: dict = {}
     original_spec: dict | None = None
     agent_trace: list[dict[str, Any]] = []
+    seen_top_formulas: set[str] = set()
     retrieval_budget = _as_int_env("CRITICALMAT_AGENTIC_RETRIEVE_BUDGET", 1)
     retrieval_used = 0
     decision_timeout_s = _as_int_env("CRITICALMAT_AGENTIC_DECISION_TIMEOUT_S", 4)
@@ -426,6 +428,12 @@ def run_agent(
             spec = _preserve_original_material_context(spec, original_spec)
         latest_spec = dict(spec)
         retrieval_spec = _query_safe_spec(spec)
+        if seen_top_formulas:
+            retrieval_target_props = dict(retrieval_spec.get("target_props", {}) or {})
+            existing_exclusions = list(retrieval_target_props.get("exclude_formulas", []) or [])
+            merged_exclusions = list(dict.fromkeys(existing_exclusions + sorted(seen_top_formulas)))
+            retrieval_target_props["exclude_formulas"] = merged_exclusions
+            retrieval_spec["target_props"] = retrieval_target_props
         memory.add_composition(current_hypothesis)
         print_status_line("1) Parsed hypothesis into structured spec.")
 
@@ -492,6 +500,9 @@ def run_agent(
                 memory.current_best = dict(selected_top)
 
         top_score = selected_top.get("score", 0) if selected_top else 0
+        top_formula = str((selected_top or {}).get("formula", "") or "").strip()
+        if top_formula:
+            seen_top_formulas.add(top_formula)
         best_scores.append(top_score)
         print_status_line(f"3) Scored candidates. Best eligible score this round: {top_score}")
         if selected_top:
