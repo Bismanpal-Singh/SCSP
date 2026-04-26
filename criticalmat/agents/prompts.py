@@ -46,6 +46,7 @@ Required JSON schema:
     "max_stability_above_hull": 0.1,
     "prefer_low_formation_energy": true,
     "avoid_rare_earths": true,
+    "require_compound": true,
 
     "exclude_radioactive": true,
     "require_solid_state": true,
@@ -66,6 +67,7 @@ Rules for element constraints:
 - If the user says non-radioactive, radioactive-free, safe, field-safe, or deployable, set exclude_radioactive to true.
 - If the user says solid-state, bulk material, ceramic, alloy, or crystal, set require_solid_state to true.
 - If the user says manufacturable, scalable, practical, production-ready, or deployable, set require_practical_materials and require_manufacturable to true.
+- For permanent magnet tasks, set require_compound to true unless the user explicitly asks to include elemental baselines.
 - If the user says non-toxic, low-toxicity, or environmentally safe, set avoid_toxic_elements to true.
 
 Rules for material class:
@@ -214,4 +216,22 @@ Bad examples:
 "Use neodymium because it performs well."
 "Try radioactive actinide compounds."
 "Explore Mn-Bi first even though lower-risk Mn-Al-C or ferrite families have not been tested."
+"""
+
+
+def synthesis_recommendation_prompt(candidate: dict) -> str:
+    """Prompt for generating a concise synthesis route recommendation."""
+    return f"""
+You are CriticalMat's materials synthesis assistant.
+
+Given this winning computational candidate:
+{json.dumps(candidate, indent=2)}
+
+Write a realistic 1-2 sentence synthesis recommendation suitable for a hackathon demo.
+
+Rules:
+- Mention a plausible route (e.g., arc melting + annealing, solid-state reaction, thin-film route).
+- Include at least one process condition (temperature range, atmosphere, or duration).
+- Be careful not to overclaim performance; mention this is a suggested experimental route.
+- Return plain text only, no markdown bullets.
 """

@@ -239,10 +239,39 @@ def apply_supply_chain_filter(candidates: list[dict]) -> list[dict]:
 
 
 def _apply_viability_filters(candidates: list[dict], target_props: dict | None) -> list[dict]:
-    # Soft mode only: preserve all candidates, let downstream modules decide hard filtering.
-    # We still compute and expose realism flags via `_set_practicality_flag`.
-    del target_props
-    return candidates
+    props = target_props or {}
+    if not candidates:
+        return []
+
+    is_magnet_task = _magnet_task(props)
+    require_solid_state = _to_bool(props.get("require_solid_state", True), default=True)
+    exclude_radioactive = _to_bool(props.get("exclude_radioactive", True), default=True)
+    require_practical_materials = _to_bool(props.get("require_practical_materials", True), default=True)
+    require_compound = _to_bool(props.get("require_compound", is_magnet_task), default=is_magnet_task)
+    rules = _practicality_rules(props)
+
+    filtered: list[dict] = []
+    for candidate in candidates:
+        elements = set(candidate.get("elements", []) or [])
+        if exclude_radioactive and candidate.get("is_radioactive", False):
+            continue
+        if require_solid_state and not candidate.get("is_solid_likely", True):
+            continue
+        if require_compound and len(elements) < 2:
+            continue
+        if is_magnet_task and _to_float(candidate.get("magnetic_moment", 0.0), 0.0) < rules["min_magnetic_moment"]:
+            continue
+        if _to_float(candidate.get("stability_above_hull", 1.0), 1.0) > rules["max_stability_above_hull"]:
+            continue
+
+        enriched = dict(candidate)
+        if require_practical_materials and len(elements) > 6:
+            continue
+        enriched["is_practical"] = True
+        filtered.append(enriched)
+
+    # Do not return empty unless truly nothing passed; keep caller resilient.
+    return filtered if filtered else candidates
 
 
 def _screen_fetch_limit(target_props: dict | None, final_limit: int) -> int:
@@ -261,11 +290,22 @@ def _screen_fetch_limit(target_props: dict | None, final_limit: int) -> int:
 def _rank_candidates(candidates: list[dict], target_props: dict | None) -> list[dict]:
     if not candidates:
         return []
-    spec = {"target_props": target_props or {}}
+    props = target_props or {}
+    spec = {"target_props": props}
+    preferred = [str(f).strip().lower() for f in (props.get("preferred_families", []) or [])]
     ranked = []
     for candidate in candidates:
         enriched = dict(candidate)
-        enriched["prelim_score"] = score_candidate(enriched, spec)
+        base_score = score_candidate(enriched, spec)
+        family_tag = str(enriched.get("family_tag", "")).lower()
+        family_bonus = 0
+        if preferred:
+            if family_tag in preferred:
+                # Earlier preferred families get slightly higher boost.
+                family_bonus = max(4, 10 - 2 * preferred.index(family_tag))
+            elif family_tag == "elemental":
+                family_bonus = -8
+        enriched["prelim_score"] = base_score + family_bonus
         ranked.append(enriched)
     ranked.sort(key=lambda c: c.get("prelim_score", 0), reverse=True)
     return ranked

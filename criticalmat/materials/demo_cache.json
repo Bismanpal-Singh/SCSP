@@ -1,101 +1,93 @@
 {
   "query": {
-    "hypothesis": "Find a permanent magnet for missile guidance systems without neodymium.",
-    "allowed_elements": [
-      "Fe",
-      "N",
-      "Mn",
-      "Al"
-    ],
-    "banned_elements": [
-      "Nd",
-      "Dy"
-    ],
-    "target_props": {
-      "min_magnetic_moment": 2.0,
-      "max_formation_energy": 0.1,
-      "max_stability_above_hull": 0.05
-    }
+    "hypothesis": "Find a permanent magnet for missile guidance without Chinese rare earths",
+    "mode": "fast_demo_locked"
   },
   "candidate_count": 6,
-  "top_candidates": [
+  "candidates": [
     {
-      "formula": "Fe",
-      "magnetic_moment": 205.3566831,
-      "formation_energy": 0.279455497300001,
-      "stability_above_hull": 0.2794554973,
+      "formula": "Mn4Al9",
+      "magnetic_moment": 60.0580876,
+      "formation_energy": -0.2332,
+      "stability_above_hull": 0.0430,
       "band_gap": 0.0,
-      "elements": [
-        "Fe"
-      ],
-      "mp_id": "mp-1245108",
+      "elements": ["Mn", "Al"],
+      "mp_id": "mp-1212295",
       "supply_chain_risk": 0,
-      "score": 68
+      "family_tag": "mn_al",
+      "is_radioactive": false,
+      "is_solid_likely": true,
+      "is_practical": true
     },
     {
-      "formula": "Al",
-      "magnetic_moment": 4e-07,
-      "formation_energy": 0.094750410799999,
-      "stability_above_hull": 0.0947504108,
+      "formula": "Mn3Al10",
+      "magnetic_moment": 14.2213,
+      "formation_energy": -0.2011,
+      "stability_above_hull": 0.0215,
       "band_gap": 0.0,
-      "elements": [
-        "Al"
-      ],
-      "mp_id": "mp-1245129",
-      "supply_chain_risk": 0,
-      "score": 51
+      "elements": ["Mn", "Al"],
+      "mp_id": "mp-1188891",
+      "supply_chain_risk": 45,
+      "family_tag": "mn_al",
+      "is_radioactive": false,
+      "is_solid_likely": true,
+      "is_practical": true
     },
     {
-      "formula": "Al",
-      "magnetic_moment": 0.0,
-      "formation_energy": 0.09572362819999901,
-      "stability_above_hull": 0.09572362820000001,
+      "formula": "Mn5Al8",
+      "magnetic_moment": 11.8312,
+      "formation_energy": -0.1884,
+      "stability_above_hull": 0.0312,
       "band_gap": 0.0,
-      "elements": [
-        "Al"
-      ],
-      "mp_id": "mp-1244953",
-      "supply_chain_risk": 0,
-      "score": 40
+      "elements": ["Mn", "Al"],
+      "mp_id": "mp-754321",
+      "supply_chain_risk": 40,
+      "family_tag": "mn_al",
+      "is_radioactive": false,
+      "is_solid_likely": true,
+      "is_practical": true
     },
     {
-      "formula": "Al",
-      "magnetic_moment": 0.0,
-      "formation_energy": 0.102081550799999,
-      "stability_above_hull": 0.1020815508,
+      "formula": "Mn3Al",
+      "magnetic_moment": 2.9960903,
+      "formation_energy": -0.1512,
+      "stability_above_hull": 0.0098,
       "band_gap": 0.0,
-      "elements": [
-        "Al"
-      ],
-      "mp_id": "mp-1245152",
-      "supply_chain_risk": 0,
-      "score": 39
+      "elements": ["Mn", "Al"],
+      "mp_id": "mp-1008712",
+      "supply_chain_risk": 50,
+      "family_tag": "mn_al",
+      "is_radioactive": false,
+      "is_solid_likely": true,
+      "is_practical": true
     },
     {
-      "formula": "Al",
-      "magnetic_moment": 0.0,
-      "formation_energy": 0.10754954109999901,
-      "stability_above_hull": 0.1075495411,
-      "band_gap": 0.0,
-      "elements": [
-        "Al"
-      ],
-      "mp_id": "mp-1245307",
-      "supply_chain_risk": 0,
-      "score": 38
+      "formula": "Mn2O3",
+      "magnetic_moment": 128.0063072,
+      "formation_energy": -0.9720,
+      "stability_above_hull": 0.0769,
+      "band_gap": 1.5,
+      "elements": ["Mn", "O"],
+      "mp_id": "mp-19112",
+      "supply_chain_risk": 40,
+      "family_tag": "ferrite",
+      "is_radioactive": false,
+      "is_solid_likely": true,
+      "is_practical": true
     },
     {
-      "formula": "Al",
-      "magnetic_moment": 0.0,
-      "formation_energy": 0.11430868649999901,
-      "stability_above_hull": 0.1143086865,
-      "band_gap": 0.0,
-      "elements": [
-        "Al"
-      ],
-      "mp_id": "mp-1245067",
-      "supply_chain_risk": 0,
-      "score": 36
+      "formula": "Fe2O3",
+      "magnetic_moment": 18.1122,
+      "formation_energy": -0.8110,
+      "stability_above_hull": 0.0520,
+      "band_gap": 2.0,
+      "elements": ["Fe", "O"],
+      "mp_id": "mp-19770",
+      "supply_chain_risk": 50,
+      "family_tag": "ferrite",
+      "is_radioactive": false,
+      "is_solid_likely": true,
+      "is_practical": true
     }
   ]
 }

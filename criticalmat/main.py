@@ -43,6 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable all mock fallbacks; fail fast if real P1/P2 paths fail.",
     )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Use demo_cache.json candidates instead of live Materials Project API queries.",
+    )
     return parser
 
 
@@ -63,6 +68,7 @@ def main() -> None:
         use_real_p1=not args.mock_p1,
         use_real_p2=(args.real_p2 or not args.mock_p2),
         allow_mock_fallback=not args.strict_real,
+        fast_mode=args.fast,
     )
     best = result.get("best_candidate", {})
 
@@ -70,11 +76,11 @@ def main() -> None:
     if not best:
         print("No viable candidate found.")
         return
-    print(
-        f"Best candidate: {best.get('formula')} | "
-        f"Score: {best.get('score')} | "
-        f"Magnetic moment: {best.get('magnetic_moment')}"
-    )
+    print(f"Formula: {best.get('formula')}")
+    print(f"Score: {best.get('score')} / 100")
+    print(f"Magnetic moment: {best.get('magnetic_moment')} μB")
+    print(f"Supply chain risk: {best.get('supply_chain_risk', 'N/A')}% China dependency")
+    print(f"Synthesis route: {best.get('synthesis_recommendation', 'N/A')}")
 
 
 if __name__ == "__main__":
