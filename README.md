@@ -49,12 +49,6 @@ Live run (uses Materials Project API):
 python -m criticalmat.main --hypothesis "Find a rare-earth-free permanent magnet for missile guidance"
 ```
 
-Fast demo mode (uses cached candidates, avoids live MP query):
-
-```bash
-python -m criticalmat.main --fast --hypothesis "Find a rare-earth-free permanent magnet for missile guidance"
-```
-
 ## Example Output
 
 ```text

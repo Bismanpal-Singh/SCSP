@@ -148,7 +148,7 @@ If no ineligible candidates are provided, include exactly:
 Explain:
 1. What the agent tested in this iteration.
 2. Which candidates are INELIGIBLE and exactly why.
-3. Which eligible candidate is strongest and why.
+3. Which eligible candidate is the most promising computational candidate for further screening and why.
 4. How supply-chain risk affected the ranking.
 5. What the agent learned from this iteration.
 
@@ -162,6 +162,10 @@ Hard constraint examples:
 Important constraints:
 - Be honest: these are computational/virtual-screening results, not confirmed physical lab results.
 - Do not overclaim that a material is proven for missile systems, aircraft, or any defense platform.
+- Use cautious phrases like "promising computational candidate" or "candidate for further screening".
+- Avoid overconfident phrases like "excellent candidate", "ideal", "proven", or "suitable for missile guidance".
+- If the hypothesis targeted a ternary family such as Mn-Al-C but returned candidates only contain binary subsets such as Mn-Al or Mn-C, explicitly say: "The search targeted Mn-Al-C, but returned binary Mn-Al and Mn-C phases in this pass."
+- Do not claim ternary compounds were tested unless candidate elements contain all three target elements together.
 - Keep the explanation clear for non-materials-science judges.
 - Keep it under 240 words.
 """
@@ -199,17 +203,16 @@ The next hypothesis must:
 - Prefer solid-state, manufacturable, scalable materials.
 - Be specific enough for another agent to parse.
 - Be chemically reasonable for the target application.
+- Preserve original_material_class and original_hypothesis from memory.
+- Do not switch material classes unless the original user request explicitly asks for that new class.
 - Choose a different search direction if failures cluster around one family.
 
-Use these realistic next-step families in priority order when appropriate:
-1. Mn-Al-C family for rare-earth-free permanent magnets because it is solid-state, practical, and lower supply-chain risk.
-2. Ferrite Fe-O family such as strontium ferrite or barium ferrite for low-cost stable magnets.
-3. Fe-N / iron nitride family for rare-earth-free permanent magnets.
-4. Co-reduced Fe-Ni or Fe-Co-Ni family only if cobalt is not banned and cobalt risk is acceptable.
-5. Heusler alloy families such as Mn-Al, Fe-Mn-Si, or Co-free variants when suitable.
-6. Fe-Si or Fe-Ga families for magnetostrictive or actuator-related applications.
-7. Mn-Bi family only if bismuth supply risk is explicitly acceptable and lower-risk families have already failed.
-8. Alnico-style Fe-Al-Ni-Co family only if cobalt is not banned.
+Use these realistic next-step families only when they match original_material_class:
+- permanent_magnet: Mn-Al-C, ferrites such as Sr/Ba ferrite, Fe-N iron nitride, Co-reduced Fe-Ni only if Co is acceptable.
+- semiconductor: SiC, AlN, BN, ZnO, TiO2, diamond/carbon semiconductor structures, other stable non-toxic wide-bandgap compounds.
+- battery_material: LiFePO4, NaFePO4, Mn-based oxides, Fe/Mn phosphates, sodium-ion cathodes, Li-S sulfur/carbon chemistry when framed as battery chemistry.
+- protective_coating: oxides, nitrides, carbides, ceramics, SiC, Ti/Ta/Al-based coating systems, Zn/Al-rich coatings.
+- high_temperature_structural_material: carbides, nitrides, borides, silicides, refractory alloys, stable oxides.
 
 Diversity rule:
 - If the memory shows Fe-N failed, do not suggest Fe-N again.
@@ -217,7 +220,7 @@ Diversity rule:
 - If ferrites failed, do not suggest ferrites again.
 - If cobalt was penalized or banned, avoid Co-heavy families.
 - If candidates failed due to supply-chain risk, suggest more abundant Fe/Mn/Al/Si/O/N based families.
-- If candidates failed due to weak magnetism, suggest a family known for stronger magnetic behavior.
+- If original_material_class is not permanent_magnet, do not use magnetic-performance reasoning.
 - If candidates failed due to poor stability, suggest more chemically stable oxide, nitride, or alloy families.
 
 Good examples:
@@ -225,6 +228,8 @@ Good examples:
 "Test ferrite Fe-O candidates such as strontium ferrite because they avoid rare earths and offer low supply-chain risk for scalable magnet applications."
 "Try Fe-N iron nitride candidates because they may preserve strong magnetism while avoiding rare-earth dependence."
 "Explore Co-reduced Fe-Ni alloy candidates because they may balance magnetic performance with lower strategic supply-chain risk."
+"Explore LiFePO4 and Mn-rich phosphate cathodes because they remain cobalt-free battery materials with practical cycling validation paths."
+"Explore SiC and AlN wide-bandgap semiconductor compounds because they avoid Ga/As and are plausible for radiation-tolerant electronics."
 
 Bad examples:
 "Try something better."
@@ -233,6 +238,7 @@ Bad examples:
 "Use neodymium because it performs well."
 "Try radioactive actinide compounds."
 "Explore Mn-Bi first even though lower-risk Mn-Al-C or ferrite families have not been tested."
+"Explore Mn-Al-C permanent magnet candidates for a battery cathode request."
 """
 
 
@@ -296,8 +302,8 @@ Return ONLY valid JSON with schema:
   "portfolio": [
     {{
       "rank": 1,
-      "candidate": "Mn4Al9",
-      "family": "Mn-Al",
+      "formula": "Mn4Al9",
+      "material_family": "Mn-Al",
       "scores": {{
         "scientific_fit": 85,
         "stability": 90,
@@ -306,9 +312,16 @@ Return ONLY valid JSON with schema:
         "evidence_confidence": 90,
         "overall": 100
       }},
+      "overall_score": 100,
+      "scientific_fit_score": 85,
+      "stability_score": 90,
+      "supply_chain_score": 100,
+      "manufacturability_score": 80,
+      "evidence_confidence": 90,
       "main_uncertainty": "material-specific uncertainty sentence",
       "likely_failure_mode": "material-specific likely failure mode sentence",
       "recommended_experiment": "must include a real technique such as XRD, VSM, SQUID, SEM, EIS, or coincell cycling",
+      "rationale": "why this candidate is appropriate for this material class",
       "status": "TEST_FIRST|BACKUP_TEST|SAFE_FALLBACK|EXPLORE_LATER|INELIGIBLE"
     }}
   ],
@@ -320,11 +333,44 @@ Return ONLY valid JSON with schema:
 }}
 
 Rules:
+- Output 3-5 eligible candidates only for the ranked portfolio whenever plausible.
+- Do NOT place INELIGIBLE candidates in ranked portfolio.
 - Include exactly one TEST_FIRST candidate when possible.
-- TEST_FIRST = only highest scoring eligible candidate.
-- BACKUP_TEST = second-best eligible candidate.
-- SAFE_FALLBACK = stable fallback even if lower score.
+- TEST_FIRST = highest-confidence class-relevant eligible candidate.
+- BACKUP_TEST = second-best class-relevant eligible candidate.
+- SAFE_FALLBACK = stable, practical fallback from the same material class context.
 - main_uncertainty and likely_failure_mode must be specific to each material.
 - recommended_experiment must name at least one real lab technique.
+- Penalize class-irrelevant candidates, do not force them into top ranks.
+
+Class-specific constraints:
+- permanent_magnet:
+  - Prioritize magnetic performance and coercivity-relevant candidates.
+  - Mention XRD + VSM/SQUID + annealing/thermal demagnetization tests.
+- protective_coating:
+  - Prefer oxides, nitrides, carbides, ceramics, Ta/Ti/Al-based coatings, SiC, Zn/Al-rich systems.
+  - Do NOT rank elemental sulfur as a strong backup.
+  - Elemental rare-earth metals (e.g., Ce) are not standalone winners unless clear compound context supports it.
+  - Uncertainties should reference adhesion, saltwater corrosion, pinholes, delamination, interface durability, marine lifetime.
+  - Experiments should include EIS, salt spray, potentiodynamic polarization, adhesion/scratch, SEM, XRD, 3.5% NaCl.
+- semiconductor:
+  - Prefer semiconducting compounds with band_gap > 0 when available.
+  - Penalize metallic candidates for semiconductor targets.
+  - Avoid magnetic reasoning.
+  - Include I-V/C-V, radiation exposure, thermal cycling, leakage current, defect spectroscopy.
+- battery_material:
+  - Prefer stable electrochemical material families.
+  - Include coin-cell cycling, charge/discharge, EIS, XRD pre/post cycling, thermal safety tests.
+- high_temperature_structural_material:
+  - Prefer ceramics/carbides/nitrides/borides/silicides/refractory alloys/stable oxides.
+  - Include thermal cycling, oxidation tests, hardness/fatigue, TGA/DSC, XRD.
+- general/unknown:
+  - Use practical broad scoring and realistic validation experiments.
+
+- If no plausible high-confidence candidate exists, return a truthful portfolio item that says:
+  "No high-confidence candidate found; broaden search to <relevant families>"
+  with status EXPLORE_LATER.
+- Use cautious wording: "promising computational candidate", "candidate for further screening", "requires physical validation".
+- Do not call any candidate proven, field-ready, or suitable for a defense platform.
 - No markdown and no extra keys.
 """

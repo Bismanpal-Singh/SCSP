@@ -13,6 +13,161 @@ from rich.tree import Tree
 console = Console()
 
 
+def _normalize_material_class(value: object) -> str:
+    return str(value or "unknown").strip().lower() or "unknown"
+
+
+def get_material_class_from_candidate_or_spec(candidate: dict, spec: dict | None = None) -> str:
+    target_props = dict((spec or {}).get("target_props", {}) or {})
+    return _normalize_material_class(
+        candidate.get("material_class")
+        or target_props.get("material_class")
+        or "unknown"
+    )
+
+
+def get_candidate_property(candidate: dict, keys: list[str]) -> object:
+    for key in keys:
+        value = candidate.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _supply_chain_risk(candidate: dict) -> int | None:
+    risk = get_candidate_property(candidate, ["supply_chain_risk", "china_dependency"])
+    if risk is not None:
+        return int(float(risk))
+    score = get_candidate_property(candidate, ["supply_chain_score", "supply_chain_safety_score"])
+    scores = dict(candidate.get("scores", {}) or {})
+    if score is None:
+        score = scores.get("supply_chain_safety")
+    if score is not None:
+        return max(0, min(100, 100 - int(float(score))))
+    return None
+
+
+def _supply_risk_line(supply_risk: int | None) -> str:
+    if supply_risk is None:
+        return "N/A"
+    return (
+        "[green]0% China dependency[/green]"
+        if supply_risk == 0
+        else f"[red]{supply_risk}% China dependency[/red]"
+    )
+
+
+def format_final_result_fields(candidate: dict, spec: dict | None = None) -> list[tuple[str, str]]:
+    material_class = get_material_class_from_candidate_or_spec(candidate, spec)
+    score = int(candidate.get("score", 0) or 0)
+    stability = float(candidate.get("stability_above_hull", 1.0) or 1.0)
+    band_gap = candidate.get("band_gap")
+    band_gap_text = f"{float(band_gap):.3f} eV" if band_gap is not None else "N/A"
+    supply_risk = _supply_chain_risk(candidate)
+    synthesis = str(candidate.get("synthesis_recommendation", "") or "").strip()
+    uncertainty = str(candidate.get("main_uncertainty", "N/A"))
+    recommended_experiment = str(
+        candidate.get("recommended_experiment", "N/A")
+    )
+
+    if not synthesis:
+        synthesis = recommended_experiment
+
+    fields: list[tuple[str, str]] = [
+        ("Score", f"{score} / 100"),
+        ("Supply chain risk", _supply_risk_line(supply_risk)),
+    ]
+
+    if material_class == "permanent_magnet":
+        magnetic = get_candidate_property(
+            candidate,
+            ["magnetic_moment", "total_magnetization", "magnetization", "magnetic_moment_total"],
+        )
+        magnetic_text = f"{float(magnetic):.2f} \u03bcB" if magnetic is not None else "N/A"
+        fields.insert(1, ("Magnetic moment", magnetic_text))
+        fields.append(("Synthesis route", synthesis or "N/A"))
+        return fields
+
+    if material_class == "semiconductor":
+        fields.insert(1, ("Band gap", band_gap_text))
+        fields.insert(2, ("Stability (E_hull)", f"{stability:.3f} eV/atom"))
+        fields.append(("Main uncertainty", uncertainty))
+        fields.append(
+            (
+                "Recommended radiation/electrical test",
+                recommended_experiment if recommended_experiment != "N/A" else "TID + electrical characterization (I-V/C-V).",
+            )
+        )
+        return fields
+
+    if material_class == "protective_coating":
+        fields.insert(1, ("Chemical/stability proxy", f"E_hull {stability:.3f} eV/atom"))
+        fields.append(("Main uncertainty", uncertainty))
+        fields.append(
+            (
+                "Recommended corrosion test",
+                recommended_experiment if recommended_experiment != "N/A" else "Salt-spray + electrochemical impedance testing.",
+            )
+        )
+        return fields
+
+    if material_class == "battery_material":
+        fields.insert(1, ("Stability (E_hull)", f"{stability:.3f} eV/atom"))
+        fields.append(("Cycling/electrochemical uncertainty", uncertainty))
+        fields.append(
+            (
+                "Recommended battery test",
+                recommended_experiment if recommended_experiment != "N/A" else "Galvanostatic cycling + rate capability testing.",
+            )
+        )
+        return fields
+
+    if material_class == "high_temperature_structural_material":
+        fields.insert(1, ("Stability/thermal proxy", f"E_hull {stability:.3f} eV/atom"))
+        fields.append(("Oxidation/manufacturing uncertainty", uncertainty))
+        fields.append(
+            (
+                "Recommended thermal/mechanical test",
+                recommended_experiment if recommended_experiment != "N/A" else "High-temperature oxidation + creep testing.",
+            )
+        )
+        return fields
+
+    fields.insert(1, ("Stability (E_hull)", f"{stability:.3f} eV/atom"))
+    fields.append(("Main uncertainty", uncertainty))
+    fields.append(("Recommended experiment", recommended_experiment))
+    return fields
+
+
+def get_candidate_table_columns(spec: dict | None = None) -> list[tuple[str, str]]:
+    material_class = get_material_class_from_candidate_or_spec({}, spec)
+    if material_class == "permanent_magnet":
+        return [
+            ("Formula", "formula"),
+            ("Score", "score"),
+            ("Magnetic Moment", "magnetic_moment"),
+            ("Supply Risk", "supply_risk"),
+            ("Status", "status"),
+        ]
+    if material_class == "semiconductor":
+        return [
+            ("Formula", "formula"),
+            ("Score", "score"),
+            ("Band Gap (eV)", "band_gap"),
+            ("E_hull", "stability"),
+            ("Supply Risk", "supply_risk"),
+            ("Status", "status"),
+        ]
+    return [
+        ("Formula", "formula"),
+        ("Score", "score"),
+        ("E_hull", "stability"),
+        ("Family", "family"),
+        ("Supply Risk", "supply_risk"),
+        ("Status", "status"),
+    ]
+
+
 def print_header(hypothesis: str) -> None:
     title = Text("CRITICALMAT", style="bold white")
     body = Text.assemble(
@@ -73,53 +228,49 @@ def print_reasoning(text: str, iteration: int) -> None:
 def print_candidate(
     formula: str,
     score: int,
-    magnetic_moment: float,
-    supply_chain_risk: int,
+    magnetic_moment: float | None,
+    supply_chain_risk: int | None,
     status: str,
+    material_class: str = "unknown",
+    band_gap: float | None = None,
+    stability_above_hull: float | None = None,
+    material_family: str | None = None,
 ) -> None:
     score_style = "green" if score >= 80 else "yellow" if score >= 50 else "red"
     risk_text = (
         f"[green]\u2713 {supply_chain_risk}%[/green]"
         if supply_chain_risk == 0
-        else f"[red]\u26A0 {supply_chain_risk}%[/red]"
+        else f"[red]\u26A0 {supply_chain_risk}%[/red]" if supply_chain_risk is not None else "N/A"
     )
+    spec = {"target_props": {"material_class": _normalize_material_class(material_class)}}
+    columns = get_candidate_table_columns(spec)
     table = Table(box=box.SIMPLE_HEAVY)
-    table.add_column("Formula", style="bold white")
-    table.add_column("Score")
-    table.add_column("Magnetic Moment")
-    table.add_column("Supply Risk")
-    table.add_column("Status")
-    table.add_row(
-        formula,
-        f"[{score_style}]{score}[/{score_style}]",
-        f"{magnetic_moment:.2f}",
-        risk_text,
-        status,
-    )
+    for idx, (label, _) in enumerate(columns):
+        table.add_column(label, style="bold white" if idx == 0 else None)
+    values = {
+        "formula": formula,
+        "score": f"[{score_style}]{score}[/{score_style}]",
+        "magnetic_moment": f"{float(magnetic_moment):.2f}" if magnetic_moment is not None else "N/A",
+        "band_gap": f"{float(band_gap):.3f}" if band_gap is not None else "N/A",
+        "stability": f"{float(stability_above_hull):.3f}" if stability_above_hull is not None else "N/A",
+        "family": str(material_family or "N/A"),
+        "supply_risk": risk_text,
+        "status": status,
+    }
+    table.add_row(*[str(values[key]) for _, key in columns])
     console.print(table)
 
 
-def print_final_result(candidate: dict) -> None:
+def print_final_result(candidate: dict, spec: dict | None = None) -> None:
     formula = candidate.get("formula", "N/A")
     score = int(candidate.get("score", 0) or 0)
-    magnetic_moment = float(candidate.get("magnetic_moment", 0.0) or 0.0)
-    supply_risk = int(candidate.get("supply_chain_risk", 0) or 0)
-    synthesis = candidate.get("synthesis_recommendation", "No synthesis recommendation available.")
 
     score_color = "green" if score >= 80 else "yellow" if score >= 50 else "red"
-    risk_line = (
-        "[green]0% China dependency[/green]"
-        if supply_risk == 0
-        else f"[red]{supply_risk}% China dependency[/red]"
-    )
-
-    body = (
-        f"[bold white]WINNER:[/bold white] [{score_color}]{formula}[/{score_color}]\n"
-        f"[bold white]Score:[/bold white] [{score_color}]{score} / 100[/{score_color}]\n"
-        f"[bold white]Magnetic moment:[/bold white] {magnetic_moment:.2f} μB\n"
-        f"[bold white]Supply chain risk:[/bold white] {risk_line}\n"
-        f"[bold white]Synthesis route:[/bold white] {synthesis}"
-    )
+    fields = format_final_result_fields(candidate, spec)
+    lines = [f"[bold white]PROMISING COMPUTATIONAL CANDIDATE:[/bold white] [{score_color}]{formula}[/{score_color}]"]
+    for label, value in fields:
+        lines.append(f"[bold white]{label}:[/bold white] {value}")
+    body = "\n".join(lines)
     console.print(
         Panel(
             body,
@@ -152,6 +303,7 @@ def print_portfolio_table(portfolio: list) -> None:
 
     for i, entry in enumerate((portfolio or [])[:5]):
         scores = dict(entry.get("scores", {}) or {})
+        risk = _supply_chain_risk(entry)
         status = str(entry.get("status", "EXPLORE_LATER"))
         color = status_colors.get(status, "white")
         row_style = "bold" if i == 0 else ""
@@ -162,7 +314,7 @@ def print_portfolio_table(portfolio: list) -> None:
             str(scores.get("overall", "")),
             str(scores.get("scientific_fit", "")),
             str(scores.get("stability", "")),
-            str(scores.get("supply_chain_safety", "")),
+            "" if risk is None else str(risk),
             str(scores.get("evidence_confidence", "")),
             style=row_style,
         )

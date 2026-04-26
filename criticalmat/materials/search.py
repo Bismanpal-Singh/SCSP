@@ -221,6 +221,61 @@ def _magnet_task(target_props: dict | None) -> bool:
     return _to_bool(props.get("needs_magnetism", False))
 
 
+def _material_class(target_props: dict | None) -> str:
+    props = target_props or {}
+    return str(props.get("material_class", "unknown") or "unknown").strip().lower()
+
+
+def _is_pure_element(candidate: dict) -> bool:
+    return len(set(candidate.get("elements", []) or [])) <= 1
+
+
+def _is_class_relevant_candidate(candidate: dict, target_props: dict | None) -> bool:
+    material_class = _material_class(target_props)
+    elements = set(candidate.get("elements", []) or [])
+    formula = str(candidate.get("formula", "") or "").lower()
+    family = str(candidate.get("material_family", "") or "").lower()
+    band_gap = _to_float(candidate.get("band_gap", 0.0), 0.0)
+    is_pure = _is_pure_element(candidate)
+
+    if material_class == "semiconductor":
+        if is_pure and not elements.intersection({"C", "Si", "Ge"}):
+            return False
+        return band_gap > 0.0
+
+    if material_class == "battery_material":
+        if is_pure:
+            return False
+        return any(
+            token in formula or token in family
+            for token in ("li", "na", "mn", "fe", "po4", "oxide", "phosphate", "sulfide")
+        )
+
+    if material_class == "protective_coating":
+        if is_pure or formula in {"s", "s8", "ce"}:
+            return False
+        if elements.intersection({"O", "N", "C"}) and len(elements) >= 2:
+            return True
+        return any(
+            token in formula or token in family
+            for token in ("oxide", "nitride", "carbide", "ceramic", "sic", "tio", "al", "ta", "zn")
+        )
+
+    if material_class == "high_temperature_structural_material":
+        if is_pure:
+            return False
+        return any(
+            token in formula or token in family
+            for token in ("carbide", "nitride", "boride", "silicide", "oxide", "refractory", "c", "n", "b", "si", "o")
+        )
+
+    if material_class == "permanent_magnet":
+        # Pure Fe is useful as a baseline, but compounds/alloys should outrank it.
+        return True
+
+    return True
+
+
 def _practicality_rules(target_props: dict | None) -> dict[str, float]:
     props = target_props or {}
     return {
@@ -239,7 +294,7 @@ def apply_supply_chain_filter(candidates: list[dict]) -> list[dict]:
             # Max risky element dominates, with a small bump for multiple risky elements.
             risk_score = min(100, max(risky) + 8 * max(0, len([r for r in risky if r > 0]) - 1))
         else:
-            risk_score = 5
+            risk_score = 0
         enriched = dict(candidate)
         enriched["supply_chain_risk"] = int(risk_score)
         filtered.append(enriched)
@@ -252,6 +307,7 @@ def _apply_viability_filters(candidates: list[dict], target_props: dict | None) 
         return []
 
     is_magnet_task = _magnet_task(props)
+    material_class = _material_class(props)
     require_solid_state = _to_bool(props.get("require_solid_state", True), default=True)
     exclude_radioactive = _to_bool(props.get("exclude_radioactive", True), default=True)
     require_practical_materials = _to_bool(props.get("require_practical_materials", True), default=True)
@@ -265,7 +321,9 @@ def _apply_viability_filters(candidates: list[dict], target_props: dict | None) 
             continue
         if require_solid_state and not candidate.get("is_solid_likely", True):
             continue
-        if require_compound and len(elements) < 2:
+        if (require_compound or material_class in {"battery_material", "protective_coating", "high_temperature_structural_material"}) and len(elements) < 2:
+            continue
+        if not _is_class_relevant_candidate(candidate, props):
             continue
         if is_magnet_task and _to_float(candidate.get("magnetic_moment", 0.0), 0.0) < rules["min_magnetic_moment"]:
             continue
@@ -278,7 +336,9 @@ def _apply_viability_filters(candidates: list[dict], target_props: dict | None) 
         enriched["is_practical"] = True
         filtered.append(enriched)
 
-    # Do not return empty unless truly nothing passed; keep caller resilient.
+    if material_class in {"semiconductor", "battery_material", "protective_coating", "high_temperature_structural_material"}:
+        return filtered
+    # Do not return empty for broad/general tasks unless truly nothing passed; keep caller resilient.
     return filtered if filtered else candidates
 
 
@@ -300,12 +360,14 @@ def _rank_candidates(candidates: list[dict], target_props: dict | None) -> list[
         return []
     props = target_props or {}
     spec = {"target_props": props}
+    material_class = _material_class(props)
     preferred = [str(f).strip().lower().replace("_", "-") for f in (props.get("preferred_families", []) or [])]
     ranked = []
     for candidate in candidates:
         enriched = dict(candidate)
         base_score = score_candidate(enriched, spec)
         family_tag = str(enriched.get("material_family", "")).lower().replace("_", "-")
+        formula = str(enriched.get("formula", "") or "").lower()
         family_bonus = 0
         if preferred:
             if family_tag in preferred:
@@ -313,6 +375,25 @@ def _rank_candidates(candidates: list[dict], target_props: dict | None) -> list[
                 family_bonus = max(4, 10 - 2 * preferred.index(family_tag))
             elif family_tag == "elemental":
                 family_bonus = -8
+        if _is_pure_element(enriched):
+            if material_class in {"semiconductor", "battery_material", "protective_coating", "high_temperature_structural_material"}:
+                family_bonus -= 45
+            elif material_class == "permanent_magnet":
+                family_bonus -= 15
+        if material_class == "semiconductor":
+            band_gap = _to_float(enriched.get("band_gap", 0.0), 0.0)
+            if band_gap > 0:
+                family_bonus += 25
+            else:
+                family_bonus -= 60
+            if any(token in formula for token in ("sic", "aln", "bn", "zno", "tio2", "c")):
+                family_bonus += 15
+        elif material_class == "battery_material":
+            if any(token in formula for token in ("lifepo4", "nafepo4", "mn", "po4", "li", "na")):
+                family_bonus += 20
+        elif material_class == "protective_coating":
+            if any(token in formula or token in family_tag for token in ("sic", "tio", "al", "ta", "zn", "oxide", "nitride", "carbide")):
+                family_bonus += 20
         enriched["prelim_score"] = base_score + family_bonus
         ranked.append(enriched)
     ranked.sort(key=lambda c: c.get("prelim_score", 0), reverse=True)
@@ -384,6 +465,7 @@ def apply_hard_filters(candidates: list[dict], spec: dict) -> tuple[list[dict], 
     radioactive_elements = {"U", "Th", "Ra", "Po", "Ac", "Pa"}
 
     target_props = dict((spec or {}).get("target_props", {}) or {})
+    material_class = _material_class(target_props)
     banned_elements = set((spec or {}).get("banned_elements", []) or [])
     exclude_radioactive = bool(
         (spec or {}).get("exclude_radioactive", target_props.get("exclude_radioactive", True))
@@ -407,6 +489,9 @@ def apply_hard_filters(candidates: list[dict], spec: dict) -> tuple[list[dict], 
 
         if require_solid_state and not bool(enriched.get("is_solid_state", True)):
             reasons.append("Not solid-state material")
+        if material_class in {"semiconductor", "battery_material", "protective_coating", "high_temperature_structural_material"}:
+            if not _is_class_relevant_candidate(enriched, target_props):
+                reasons.append(f"Not a plausible {material_class} candidate")
 
         if reasons:
             enriched["eligible"] = False
