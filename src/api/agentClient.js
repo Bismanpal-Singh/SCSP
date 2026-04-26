@@ -66,7 +66,17 @@ async function parseSseStream(body, callbacks, signal) {
     if (type === 'iteration') {
       callbacks.onIteration?.(payload)
     } else if (type === 'complete') {
-      callbacks.onComplete?.(payload.finalCandidate, payload.decisionLog || [])
+      const decisionLog = payload.decisionLog || {}
+      callbacks.onComplete?.({
+        finalCandidate: payload.finalCandidate || null,
+        decisionLog,
+        portfolio: decisionLog.portfolio || [],
+        ineligible: decisionLog.ineligible || [],
+        testQueue: decisionLog.test_queue || decisionLog.testQueue || [],
+        constraints: decisionLog.constraints || {},
+        provenanceTree: decisionLog.provenance_tree || decisionLog.provenanceTree || null,
+        terminalTranscript: payload.terminalTranscript || '',
+      })
     } else if (type === 'error') {
       callbacks.onError?.(new Error(payload.message || 'Agent stream reported an error'))
     }

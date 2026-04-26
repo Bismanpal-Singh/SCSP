@@ -84,6 +84,106 @@ export const mockDecisionLog = [
   { iteration: 3, formula: "Fe₈N₂",  score: 58, decision: "rejected", reason: "Thermal stability improved over Fe₈N but still below 350°C threshold. Formation energy also unfavorable." },
 ]
 
+export const mockStructuredDecisionLog = {
+  mission: "Find a solid-state manufacturable replacement material for a defense component that avoids Chinese-controlled rare earths and radioactive elements.",
+  constraints: {
+    material_class: "permanent_magnet",
+    banned_elements: ["Nd", "Dy", "Tb", "Co"],
+    exclude_radioactive: true,
+    require_solid_state: true,
+  },
+  portfolio: [
+    {
+      rank: 1,
+      candidate: "Mn4Al9",
+      family: "Mn-Al",
+      status: "TEST_FIRST",
+      scores: {
+        scientific_fit: 85,
+        stability: 90,
+        supply_chain_safety: 100,
+        manufacturability: 80,
+        evidence_confidence: 90,
+        overall: 100,
+      },
+      main_uncertainty: "Phase stability of tau-MnAl phase under thermal cycling above 400C",
+      likely_failure_mode: "Decomposition to non-magnetic phases during operation",
+      recommended_experiment: "VSM characterization to determine magnetic anisotropy and coercivity",
+    },
+    {
+      rank: 2,
+      candidate: "Mn2O3",
+      family: "Fe-O",
+      status: "BACKUP_TEST",
+      scores: {
+        scientific_fit: 80,
+        stability: 85,
+        supply_chain_safety: 60,
+        manufacturability: 70,
+        evidence_confidence: 85,
+        overall: 90,
+      },
+      main_uncertainty: "Antiferromagnetic nature may limit utility without structural modification",
+      likely_failure_mode: "Low remanence due to antiferromagnetic coupling",
+      recommended_experiment: "SQUID magnetometry to evaluate ferrimagnetic behavior",
+    },
+    {
+      rank: 3,
+      candidate: "Fe2O3",
+      family: "Fe-O",
+      status: "SAFE_FALLBACK",
+      scores: {
+        scientific_fit: 75,
+        stability: 80,
+        supply_chain_safety: 50,
+        manufacturability: 75,
+        evidence_confidence: 95,
+        overall: 88,
+      },
+      main_uncertainty: "High-temperature phase transformation into non-magnetic hematite variants",
+      likely_failure_mode: "Insufficient coercivity for high-performance actuator applications",
+      recommended_experiment: "XRD and SEM analysis to assess microstructural stability",
+    },
+  ],
+  ineligible: [
+    { formula: "Nd2Fe14B", reason: "Contains banned element: Nd" },
+  ],
+  testQueue: [
+    "VSM characterization of Mn4Al9 to determine magnetic anisotropy and coercivity.",
+    "SQUID magnetometry of Mn2O3 to evaluate potential for ferrimagnetic behavior.",
+    "XRD and SEM analysis of Fe2O3 to assess microstructural stability.",
+  ],
+  constraintsPayload: {
+    material_class: "permanent_magnet",
+    banned_elements: ["Nd", "Dy", "Tb", "Co"],
+    exclude_radioactive: true,
+    require_solid_state: true,
+  },
+  provenanceTree: {
+    mission: "Find a solid-state manufacturable replacement material...",
+    constraints: {
+      material_class: "permanent_magnet",
+      banned_elements: ["Nd", "Dy", "Tb", "Co"],
+      exclude_radioactive: true,
+      require_solid_state: true,
+    },
+    candidate_search: {
+      iterations_run: 1,
+      ineligible: [{ formula: "Nd2Fe14B", reason: "Contains banned element: Nd" }],
+      portfolio: [
+        { rank: 1, candidate: "Mn4Al9", status: "TEST_FIRST" },
+        { rank: 2, candidate: "Mn2O3", status: "BACKUP_TEST" },
+        { rank: 3, candidate: "Fe2O3", status: "SAFE_FALLBACK" },
+      ],
+    },
+    test_queue: [
+      "VSM characterization of Mn4Al9 to determine magnetic anisotropy and coercivity.",
+      "SQUID magnetometry of Mn2O3 to evaluate ferrimagnetic behavior.",
+      "XRD and SEM analysis of Fe2O3 to assess microstructural stability.",
+    ],
+  },
+}
+
 export const mockLogSummary = {
   totalCandidates:  100,
   totalRejected:    99,
@@ -151,4 +251,9 @@ export const mockAppState = {
   decisionLog:    mockDecisionLog,
   decisionTree:   mockDecisionTree,
   logSummary:     mockLogSummary,
+  portfolio:      mockStructuredDecisionLog.portfolio,
+  ineligible:     mockStructuredDecisionLog.ineligible,
+  testQueue:      mockStructuredDecisionLog.testQueue,
+  constraints:    mockStructuredDecisionLog.constraints,
+  provenanceTree: mockStructuredDecisionLog.provenanceTree,
 }

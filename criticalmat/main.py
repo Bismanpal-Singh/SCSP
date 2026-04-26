@@ -43,17 +43,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable all mock fallbacks; fail fast if real P1/P2 paths fail.",
     )
-    parser.add_argument(
-        "--fast",
-        action="store_true",
-        help="Use demo_cache.json candidates instead of live Materials Project API queries.",
-    )
-    parser.add_argument(
-        "--cache-key",
-        type=str,
-        default="magnet-defense",
-        help="Fast-mode cache key in demo_cache.json.",
-    )
     return parser
 
 
@@ -74,8 +63,6 @@ def main() -> None:
         use_real_p1=not args.mock_p1,
         use_real_p2=(args.real_p2 or not args.mock_p2),
         allow_mock_fallback=not args.strict_real,
-        fast_mode=args.fast,
-        cache_key=args.cache_key,
     )
     best = result.get("best_candidate", {})
 

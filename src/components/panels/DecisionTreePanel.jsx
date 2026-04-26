@@ -118,6 +118,270 @@ function normalizeTree({ decisionLog, decisionTree, finalCandidate, iterations, 
   }
 }
 
+function normalizeTreeFromProvenance({ provenanceTree, query }) {
+  const constraints = provenanceTree?.constraints || {}
+  const candidateSearch = provenanceTree?.candidate_search || {}
+  const ineligible = candidateSearch.ineligible || []
+  const portfolio = candidateSearch.portfolio || []
+
+  const levels = [
+    {
+      iteration: 1,
+      candidatesTested: 1,
+      candidates: [
+        {
+          id: 'constraints-node',
+          formula: 'Constraints',
+          score: Math.min(100, Number((constraints.banned_elements || []).length || 0)),
+          status: 'explored',
+          isBest: true,
+        },
+      ],
+    },
+    {
+      iteration: 2,
+      candidatesTested: Math.max(1, ineligible.length + portfolio.length),
+      candidates: [
+        ...ineligible.slice(0, 2).map((item, index) => ({
+          id: `ineligible-${index}-${item.formula || 'x'}`,
+          formula: item.formula || 'Ineligible',
+          score: 0,
+          status: 'rejected',
+          isBest: false,
+          reason: item.reason,
+        })),
+        ...portfolio.slice(0, 3).map((item, index) => ({
+          id: `portfolio-${index}-${item.candidate || 'x'}`,
+          formula: item.candidate || 'Candidate',
+          score: Number(item.rank ? 100 - item.rank * 5 : 80),
+          status: item.rank === 1 ? 'winner' : 'explored',
+          isBest: item.rank === 1,
+          portfolioStatus: item.status,
+        })),
+      ],
+    },
+  ]
+
+  const nodes = [
+    {
+      id: ROOT.id,
+      x: ROOT.x,
+      y: ROOT.y + ROOT.height / 2,
+      label: 'Hypothesis',
+      description: provenanceTree?.mission || query || 'Submitted hypothesis',
+      status: 'root',
+    },
+    ...levels.flatMap((level, levelIndex) => {
+      const positions = LEVEL_POSITIONS[levelIndex]
+      return level.candidates.map((candidate, index) => ({
+        ...candidate,
+        x: positions.xs[index] ?? positions.xs[positions.xs.length - 1],
+        y: positions.y,
+      }))
+    }),
+  ]
+
+  const edges = []
+  let parent = nodes[0]
+  levels.forEach((level) => {
+    const levelNodes = nodes.filter((node) => level.candidates.some((item) => item.id === node.id))
+    levelNodes.forEach((candidate) => {
+      edges.push({ from: parent, to: candidate, isPath: Boolean(candidate.isBest) })
+    })
+    const best = levelNodes.find((node) => node.isBest) || levelNodes[0]
+    if (best) parent = best
+  })
+
+  return {
+    candidatesEvaluated: levels.reduce((sum, level) => sum + Number(level.candidatesTested || 0), 0),
+    edges,
+    finalScore: Number((portfolio[0] && (portfolio[0].score || portfolio[0].rank)) || 0),
+    levels,
+    nodes,
+    winner: nodes.find((node) => node.status === 'winner'),
+  }
+}
+
+function sanitizeTranscriptText(text = '') {
+  return String(text)
+    .replace(/[╔╗╚╝║╭╮╰╯┏┓┗┛┡┩┠┨┯┷┿┼━─]/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+function transcriptSections(text = '') {
+  const cleaned = sanitizeTranscriptText(text)
+  if (!cleaned) return []
+  const lines = cleaned
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  const sections = []
+  let current = { title: 'Run Details', lines: [] }
+
+  for (const line of lines) {
+    if (/^Iteration\s+\d+\s*\/\s*\d+/i.test(line)) {
+      if (current.lines.length) sections.push(current)
+      current = { title: line, lines: [] }
+      continue
+    }
+    if (/^AI REASONING\s*-\s*Iteration/i.test(line)) {
+      if (current.lines.length) sections.push(current)
+      current = { title: line, lines: [] }
+      continue
+    }
+    if (/^FINAL RESULT$/i.test(line) || /^=== Final Result ===$/i.test(line)) {
+      if (current.lines.length) sections.push(current)
+      current = { title: 'Final Result', lines: [] }
+      continue
+    }
+    current.lines.push(line)
+  }
+  if (current.lines.length) sections.push(current)
+  return sections
+}
+
+function extractIterationReasoning(text = '') {
+  const lines = String(text).split('\n')
+  const blocks = []
+  let current = null
+
+  for (const rawLine of lines) {
+    const clean = rawLine
+      .replace(/[│╭╮╰╯]/g, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+    if (!clean) continue
+
+    const headingMatch = clean.match(/AI REASONING\s*-\s*Iteration\s*(\d+)/i)
+    if (headingMatch) {
+      if (current && current.lines.length) blocks.push(current)
+      current = { iteration: Number(headingMatch[1]), lines: [] }
+      continue
+    }
+
+    if (current) {
+      if (
+        /^Converged:/i.test(clean)
+        || /^FINAL RESULT$/i.test(clean)
+        || /^=== Final Result ===$/i.test(clean)
+      ) {
+        if (current.lines.length) blocks.push(current)
+        current = null
+        continue
+      }
+      if (!/^[-═]{3,}$/.test(clean)) {
+        current.lines.push(clean)
+      }
+    }
+  }
+
+  if (current && current.lines.length) blocks.push(current)
+  return blocks
+}
+
+function extractUncertaintyRows(text = '') {
+  const lines = String(text).split('\n')
+  const rows = []
+  let inSection = false
+  let inTableBody = false
+  let pendingFamily = ''
+  let pendingUncertainty = ''
+  let pendingFailure = ''
+  const ansiPattern = /\u001b\[[0-9;]*m/g
+
+  function commitRow() {
+    const family = pendingFamily.trim()
+    const mainUncertainty = pendingUncertainty.trim()
+    const likelyFailureMode = pendingFailure.trim()
+    if (!family && !mainUncertainty && !likelyFailureMode) return
+    rows.push({
+      family: family || '—',
+      main_uncertainty: mainUncertainty || '—',
+      likely_failure_mode: likelyFailureMode || '—',
+    })
+  }
+
+  for (const rawLine of lines) {
+    const line = String(rawLine || '').replace(ansiPattern, '')
+    const clean = line.replace(/\s+/g, ' ').trim()
+    if (!clean) continue
+
+    if (clean.toUpperCase().includes("WHAT WE STILL DON'T KNOW")) {
+      inSection = true
+      inTableBody = false
+      continue
+    }
+
+    if (!inSection) continue
+    if (
+      clean.toUpperCase().includes('LAB-READY TEST QUEUE')
+      || clean.toUpperCase().includes('STRATEGIC EXPERIMENT TREE')
+      || clean.toUpperCase().includes('FULL RUN EXPLANATION')
+    ) {
+      if (pendingFamily || pendingUncertainty || pendingFailure) commitRow()
+      break
+    }
+
+    // Start parsing only after the header/body separator.
+    if (!inTableBody) {
+      if (line.includes('┡') || line.includes('╇')) {
+        inTableBody = true
+      }
+      continue
+    }
+
+    if (/^[-═┏┓┗┛┡┩┠┨┃│┬┴┼━]+$/.test(clean)) continue
+    if (
+      clean.toUpperCase().includes('MATERIAL')
+      && clean.toUpperCase().includes('FAMILY')
+      && clean.toUpperCase().includes('MAIN UNCERTAINTY')
+    ) continue
+    if (/^(WHAT WE STILL DON'T KNOW)$/i.test(clean)) continue
+
+    if (line.includes('│') || line.includes('┃')) {
+      const normalizedLine = line.replace(/┃/g, '│')
+      const segments = normalizedLine.split('│').map((part) => part.trim())
+      if (segments.length >= 4) {
+        const familyPart = segments[1] || ''
+        const uncertaintyPart = segments[2] || ''
+        const failurePart = segments.slice(3).join(' ').trim()
+        const isHeaderRow = (
+          /^(material|family)$/i.test(familyPart)
+          || /^main uncertainty$/i.test(uncertaintyPart)
+          || /^likely failure mode$/i.test(failurePart)
+        )
+        if (isHeaderRow) continue
+
+        const startsNewRow = Boolean(familyPart)
+        if (startsNewRow) {
+          if (pendingFamily || pendingUncertainty || pendingFailure) commitRow()
+          pendingFamily = familyPart
+          pendingUncertainty = uncertaintyPart
+          pendingFailure = failurePart
+        } else {
+          pendingUncertainty = `${pendingUncertainty} ${uncertaintyPart}`.trim()
+          pendingFailure = `${pendingFailure} ${failurePart}`.trim()
+        }
+      }
+    }
+  }
+
+  if (pendingFamily || pendingUncertainty || pendingFailure) commitRow()
+  return rows
+}
+
+function formatFamilyLabel(entry = {}) {
+  const family = String(entry.family || '').trim()
+  const candidate = String(entry.candidate || entry.formula || '').trim()
+  if (!family) return candidate || '—'
+  if (!candidate) return family
+  if (/^elemental$/i.test(family)) return `${family} (${candidate})`
+  if (family.toLowerCase().includes(candidate.toLowerCase())) return family
+  return `${family} (${candidate})`
+}
+
 function nodeRadius(node) {
   if (node.status === 'winner') return 44
   if (node.isBest) return 36
@@ -207,7 +471,7 @@ function statusTone(status = '') {
   if (status === 'TEST_FIRST') return 'text-emerald-200 bg-emerald-500/15 border-emerald-400/30'
   if (status === 'BACKUP_TEST') return 'text-amber-100 bg-amber-500/15 border-amber-400/30'
   if (status === 'EXPLORE_LATER') return 'text-white/85 bg-white/10 border-white/20'
-  if (status === 'SAFE_FALLBACK') return 'text-white/85 bg-white/10 border-white/20'
+  if (status === 'SAFE_FALLBACK') return 'text-cyan-100 bg-cyan-500/15 border-cyan-400/30'
   if (status === 'INELIGIBLE') return 'text-rose-100 bg-rose-500/15 border-rose-400/30'
   return 'text-rose-100 bg-rose-500/15 border-rose-400/30'
 }
@@ -228,13 +492,9 @@ function normalizeDecisionInsights({ decisionLog = [], iterations = [], finalCan
       iteration,
       formula: top.formula,
       score: Number(top.score || 0),
-      family: familyFromFormula(top.formula),
-      uncertainty: top.decision === 'selected'
-        ? 'Scale-up reproducibility and phase control'
-        : 'Constraint fit and synthesis practicality',
-      riskyFailureMode: top.decision === 'selected'
-        ? 'Metastable phase drift during anneal'
-        : 'Could fail hard constraints in downstream validation',
+      family: 'Not provided in run output.',
+      uncertainty: 'Not provided in run output.',
+      riskyFailureMode: 'Not provided in run output.',
     })
   })
 
@@ -255,12 +515,7 @@ function normalizeDecisionInsights({ decisionLog = [], iterations = [], finalCan
     rank: item.rank,
     formula: item.candidate,
     status: item.status,
-    experiment:
-      item.status === 'TEST_FIRST'
-        ? `Arc melt ${item.candidate}, then controlled anneal and magnetic characterization.`
-        : item.status === 'BACKUP_TEST'
-          ? `Replicate synthesis for ${item.candidate} as backup validation candidate.`
-          : `Archive ${item.candidate} for explore-later queue after first-pass experiments.`,
+    experiment: `Experiment recommendation not provided for ${item.candidate}.`,
   }))
 
   const ineligible = decisionLog
@@ -285,14 +540,8 @@ function normalizeDecisionInsights({ decisionLog = [], iterations = [], finalCan
       .map((entry) => ({ formula: entry.formula, reason: entry.reason || 'Rejected by scoring/constraints.' }))
 
   return {
-    mission: query || 'Defense magnet mission',
-    constraints: [
-      'rare-earth-free',
-      'non-radioactive',
-      'solid-state',
-      'manufacturable',
-      'low supply-chain risk',
-    ],
+    mission: query || 'Mission not provided.',
+    constraints: {},
     selectedFormula,
     portfolio,
     ineligible: fallbackIneligible,
@@ -361,23 +610,82 @@ function StructureNode({ node, index, onHoverStart, onHoverMove, onHoverEnd }) {
 }
 
 export default function DecisionTreePanel({
+  constraints = {},
   decisionLog = [],
   decisionTree = null,
   finalCandidate = null,
+  ineligible = [],
+  isRunning = false,
   iterations = [],
+  portfolio = [],
+  provenanceTree = null,
   query = '',
+  terminalTranscript = '',
+  testQueue = [],
 }) {
   const [tooltipNode, setTooltipNode] = useState(null)
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 })
   const [tooltipLocked, setTooltipLocked] = useState(false)
+  const [iterationTooltip, setIterationTooltip] = useState(null)
+  const [iterationTooltipPosition, setIterationTooltipPosition] = useState({ x: 0, y: 0 })
 
-  const tree = useMemo(
-    () => normalizeTree({ decisionLog, decisionTree, finalCandidate, iterations, query }),
-    [decisionLog, decisionTree, finalCandidate, iterations, query],
-  )
-  const insights = useMemo(
-    () => normalizeDecisionInsights({ decisionLog, iterations, finalCandidate, query }),
-    [decisionLog, iterations, finalCandidate, query],
+  const tree = useMemo(() => {
+    if (provenanceTree) return normalizeTreeFromProvenance({ provenanceTree, query })
+    return normalizeTree({ decisionLog, decisionTree, finalCandidate, iterations, query })
+  }, [decisionLog, decisionTree, finalCandidate, iterations, provenanceTree, query])
+
+  const insights = useMemo(() => {
+    const transcriptUncertaintyRows = extractUncertaintyRows(terminalTranscript)
+    if (portfolio.length || ineligible.length || testQueue.length || provenanceTree) {
+      return {
+        mission: provenanceTree?.mission || query || 'Mission not provided.',
+        constraints: constraints || provenanceTree?.constraints || {},
+        ineligible: ineligible || provenanceTree?.candidate_search?.ineligible || [],
+        portfolio: portfolio || [],
+        uncertaintyMap: transcriptUncertaintyRows.length
+          ? transcriptUncertaintyRows
+          : (portfolio || []).filter((entry) => entry.status !== 'INELIGIBLE').slice(0, 5),
+        queue: testQueue || provenanceTree?.test_queue || [],
+        candidateSearch: provenanceTree?.candidate_search || {},
+      }
+    }
+    const fallback = normalizeDecisionInsights({ decisionLog, iterations, finalCandidate, query })
+    return {
+      mission: fallback.mission,
+      constraints: {},
+      ineligible: fallback.ineligible,
+      portfolio: fallback.portfolio.map((row) => ({
+        rank: row.rank,
+        candidate: row.candidate,
+        status: row.status,
+        scores: {
+          overall: row.overall,
+          scientific_fit: row.sciFit,
+          stability: row.stability,
+          supply_chain_safety: row.supplyRisk,
+          evidence_confidence: row.confidence,
+        },
+        family: 'Not provided in run output.',
+        main_uncertainty: 'Not provided in run output.',
+        likely_failure_mode: 'Not provided in run output.',
+      })),
+      uncertaintyMap: transcriptUncertaintyRows.length
+        ? transcriptUncertaintyRows
+        : fallback.uncertaintyMap.map((item) => ({
+          family: item.family,
+          candidate: item.formula,
+          main_uncertainty: item.uncertainty,
+          likely_failure_mode: item.riskyFailureMode,
+        })),
+      queue: fallback.queue.map((item) => item.experiment),
+      candidateSearch: provenanceTree?.candidate_search || {},
+    }
+  }, [constraints, decisionLog, finalCandidate, ineligible, iterations, portfolio, provenanceTree, query, terminalTranscript, testQueue])
+
+  const iterationReasoning = useMemo(() => extractIterationReasoning(terminalTranscript), [terminalTranscript])
+  const reasoningByIteration = useMemo(
+    () => new Map(iterationReasoning.map((block) => [Number(block.iteration), block.lines])),
+    [iterationReasoning],
   )
 
   function showTooltip(node, event) {
@@ -395,6 +703,22 @@ export default function DecisionTreePanel({
     window.setTimeout(() => {
       if (!tooltipLocked) setTooltipNode(null)
     }, 80)
+  }
+
+  function showIterationTooltip(iteration, event) {
+    const lines = reasoningByIteration.get(Number(iteration))
+    if (!lines?.length) return
+    setIterationTooltip({ iteration, lines })
+    setIterationTooltipPosition({ x: event.clientX, y: event.clientY })
+  }
+
+  function moveIterationTooltip(iteration, event) {
+    if (!reasoningByIteration.get(Number(iteration))?.length) return
+    setIterationTooltipPosition({ x: event.clientX, y: event.clientY })
+  }
+
+  function hideIterationTooltip() {
+    setIterationTooltip(null)
   }
 
   if (tree.nodes.length <= 1) {
@@ -446,6 +770,17 @@ export default function DecisionTreePanel({
 
           {tree.levels.map((level) => (
             <g key={`iteration-label-${level.iteration}`}>
+              <rect
+                x="24"
+                y={LEVEL_POSITIONS[level.iteration - 1]?.y - 30}
+                width="350"
+                height="46"
+                fill="transparent"
+                style={{ cursor: reasoningByIteration.get(Number(level.iteration))?.length ? 'help' : 'default' }}
+                onMouseEnter={(event) => showIterationTooltip(level.iteration, event)}
+                onMouseMove={(event) => moveIterationTooltip(level.iteration, event)}
+                onMouseLeave={hideIterationTooltip}
+              />
               <line
                 x1="40"
                 y1={LEVEL_POSITIONS[level.iteration - 1]?.y}
@@ -545,6 +880,30 @@ export default function DecisionTreePanel({
           />
         )}
       </AnimatePresence>
+      <AnimatePresence>
+        {iterationTooltip && (
+          <motion.div
+            className="pointer-events-none fixed z-50 max-w-[420px] rounded-lg border border-violet-300/40 bg-[#0a1020]/95 p-3 shadow-[0_12px_40px_rgba(0,0,0,0.45)] backdrop-blur"
+            style={{
+              left: Math.min(iterationTooltipPosition.x + 14, window.innerWidth - 450),
+              top: Math.max(iterationTooltipPosition.y - 16, 16),
+            }}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 4 }}
+            transition={{ duration: 0.16 }}
+          >
+            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-violet-200/90">
+              Iteration {iterationTooltip.iteration} reasoning
+            </p>
+            <div className="mt-2 space-y-1 text-xs leading-5 text-white/80">
+              {iterationTooltip.lines.map((line, idx) => (
+                <p key={`hover-iter-${iterationTooltip.iteration}-${idx}`}>{line}</p>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <style>{`
         @keyframes winner-pulse {
           0%, 100% { filter: drop-shadow(0 0 16px rgba(0, 245, 212, 0.9)); }
@@ -555,39 +914,25 @@ export default function DecisionTreePanel({
         }
       `}</style>
 
-      <div className="grid gap-4 border-t border-white/10 bg-black/20 p-4 lg:grid-cols-2">
+      {!isRunning && finalCandidate && (
+        <div className="space-y-4 border-t border-white/10 bg-black/20 p-4">
         <section className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-200/80">01 · Portfolio Table Panel</p>
-          <p className="mt-1 text-xs text-white/45">Ranked top candidates for immediate and backup testing.</p>
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-amber-200/80">What We Still Don&apos;t Know</p>
           <div className="mt-3 overflow-x-auto">
-            <table className="w-full min-w-[760px] text-left text-xs">
-              <thead className="text-white/45">
+            <table className="w-full min-w-[700px] text-left text-xs">
+              <thead className="text-amber-100/70">
                 <tr className="border-b border-white/10">
-                  <th className="py-2 pr-3">Rank</th>
-                  <th className="py-2 pr-3">Candidate</th>
-                  <th className="py-2 pr-3">Status</th>
-                  <th className="py-2 pr-3">Overall</th>
-                  <th className="py-2 pr-3">Sci Fit</th>
-                  <th className="py-2 pr-3">Stability</th>
-                  <th className="py-2 pr-3">Supply Risk</th>
-                  <th className="py-2 pr-3">Confidence</th>
+                  <th className="py-2 pr-3">Material Family</th>
+                  <th className="py-2 pr-3">Main Uncertainty</th>
+                  <th className="py-2 pr-3">Likely Failure Mode</th>
                 </tr>
               </thead>
               <tbody>
-                {insights.portfolio.map((row) => (
-                  <tr key={`${row.rank}-${row.candidate}`} className="border-b border-white/5 text-white/80">
-                    <td className="py-2 pr-3 font-mono">{row.rank}</td>
-                    <td className="py-2 pr-3 font-semibold">{row.candidate}</td>
-                    <td className="py-2 pr-3">
-                      <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${statusTone(row.status)}`}>
-                        {row.status}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-3">{row.overall}</td>
-                    <td className="py-2 pr-3">{row.sciFit}</td>
-                    <td className="py-2 pr-3">{row.stability}</td>
-                    <td className="py-2 pr-3">{row.supplyRisk}</td>
-                    <td className="py-2 pr-3">{row.confidence}</td>
+                {insights.uncertaintyMap.map((entry, index) => (
+                  <tr key={`${entry.family}-${index}`} className="border-b border-white/5 text-white/80">
+                    <td className="py-2 pr-3 align-top break-words whitespace-pre-wrap">{formatFamilyLabel(entry)}</td>
+                    <td className="py-2 pr-3 align-top break-words whitespace-pre-wrap">{entry.main_uncertainty || '—'}</td>
+                    <td className="py-2 pr-3 align-top break-words whitespace-pre-wrap">{entry.likely_failure_mode || '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -595,69 +940,114 @@ export default function DecisionTreePanel({
           </div>
         </section>
 
-        <section className="rounded-xl border border-rose-400/30 bg-rose-500/[0.06] p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-rose-100/85">
-            02 · Rejected — Ineligible Candidates
-          </p>
-          <p className="mt-1 text-xs text-rose-100/65">Items filtered by hard constraints and exclusion rules.</p>
-          <ul className="mt-3 space-y-2 text-sm">
-            {insights.ineligible.map((entry, idx) => (
-              <li key={`${entry.formula}-${idx}`} className="rounded-lg border border-rose-300/20 bg-black/20 p-3 text-rose-100/90">
-                <p className="font-semibold">{entry.formula}</p>
-                <p className="mt-1 text-xs leading-5 text-rose-100/70">{entry.reason}</p>
-              </li>
-            ))}
-          </ul>
-        </section>
-
         <section className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-200/80">03 · Uncertainty Map Panel</p>
-          <p className="mt-1 text-xs text-white/45">What we still do not know yet.</p>
-          <div className="mt-3 space-y-2">
-            {insights.uncertaintyMap.map((item) => (
-              <div key={`${item.iteration}-${item.formula}`} className="grid grid-cols-3 gap-2 rounded-lg border border-white/10 bg-black/20 p-3 text-xs">
-                <div>
-                  <p className="text-white/40">Family</p>
-                  <p className="text-white/80">{item.family}</p>
-                </div>
-                <div>
-                  <p className="text-white/40">Main uncertainty</p>
-                  <p className="text-white/80">{item.uncertainty}</p>
-                </div>
-                <div>
-                  <p className="text-white/40">Risky failure mode</p>
-                  <p className="text-white/80">{item.riskyFailureMode}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-200/80">04 · Strategic Experiment Tree Panel</p>
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-200/80">Strategic Experiment Tree</p>
           <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3 text-xs leading-6 text-white/80">
-            <p><span className="text-white/45">Root:</span> Mission — {insights.mission}</p>
-            <p><span className="text-white/45">Level 1:</span> Constraints — {insights.constraints.join(', ')}</p>
-            <p><span className="text-white/45">Candidate search:</span> {insights.ineligible.length} ineligible filtered, then portfolio ranking.</p>
-            <p><span className="text-white/45">Final path:</span> Lab-ready test queue from ranked appointments.</p>
-          </div>
-
-          <p className="mt-4 font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-200/80">05 · Lab-Ready Test Queue Panel</p>
-          <div className="mt-2 space-y-2">
-            {insights.queue.map((item) => (
-              <div key={`${item.rank}-${item.formula}`} className="rounded-lg border border-white/10 bg-black/20 p-3 text-xs">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-semibold text-white/85">#{item.rank} {item.formula}</p>
-                  <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${statusTone(item.status)}`}>
-                    {item.status}
-                  </span>
-                </div>
-                <p className="mt-1 text-white/65">{item.experiment}</p>
+            <p><span className="text-white/45">Root:</span> Mission — {String(insights.mission || query).slice(0, 60)}</p>
+            <p>
+              <span className="text-white/45">Constraints:</span> {insights.constraints.material_class || 'unknown'} ·{' '}
+              {Array.isArray(insights.constraints.banned_elements) ? `${insights.constraints.banned_elements.length} elements banned` : '0 elements banned'} ·{' '}
+              exclude_radioactive={String(insights.constraints.exclude_radioactive ?? true)} · require_solid_state={String(insights.constraints.require_solid_state ?? true)}
+            </p>
+            {Array.isArray(insights.constraints.banned_elements) && insights.constraints.banned_elements.length > 0 && (
+              <div className="mt-2 rounded-md border border-white/10 bg-black/25 px-3 py-2">
+                <p className="text-white/45">Banned elements (full list):</p>
+                <p className="mt-1 whitespace-pre-wrap break-words text-white/75">
+                  {insights.constraints.banned_elements.join(', ')}
+                </p>
               </div>
-            ))}
+            )}
+            <p><span className="text-white/45">Candidate Search:</span> {(insights.ineligible || []).length} ineligible, {(insights.portfolio || []).length} ranked portfolio nodes.</p>
+            <p><span className="text-white/45">Lab-Ready Test Queue:</span> {(insights.queue || []).length} experiments.</p>
           </div>
+          {(insights.ineligible || []).length > 0 && (
+            <div className="mt-3 rounded-lg border border-rose-400/30 bg-rose-500/[0.06] p-3 text-xs text-rose-100/85">
+              {(insights.ineligible || []).map((entry, index) => (
+                <p key={`${entry.formula}-${index}`}>✗ {entry.formula} — {entry.reason}</p>
+              ))}
+            </div>
+          )}
+          {(insights.ineligible || []).length === 0 && (
+            <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-white/60">
+              No candidates rejected in this run.
+            </div>
+          )}
+          {(insights.portfolio || []).length > 0 && (
+            <div className="mt-3 space-y-2">
+              {(insights.portfolio || []).map((entry, index) => (
+                <div key={`${entry.rank}-${entry.candidate}-${index}`} className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-white/80">
+                  Rank {entry.rank}: {entry.candidate} <span className={`rounded-md border px-2 py-0.5 text-[10px] ${statusTone(entry.status)}`}>{entry.status}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
-      </div>
+
+        <section className="rounded-xl border border-cyan-400/30 bg-cyan-500/[0.06] p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-100/90">
+            Lab-Ready Test Queue — Hand Off to Researchers
+          </p>
+          {(insights.queue || []).length === 0 ? (
+            <p className="mt-2 text-sm text-cyan-100/65">Test queue will appear after analysis completes.</p>
+          ) : (
+            <ol className="mt-3 space-y-2">
+              {(insights.queue || []).map((item, index) => (
+                <li key={`${index}-${item}`} className="flex gap-3 rounded-lg border border-cyan-300/20 bg-black/20 p-3 text-sm text-cyan-50/90">
+                  <span className="font-mono font-bold text-cyan-200">{index + 1}.</span>
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+
+        <section className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-violet-200/80">
+            Full Run Explanation
+          </p>
+          {terminalTranscript ? (
+            <div className="mt-3 space-y-3">
+              {transcriptSections(terminalTranscript).map((section, index) => (
+                <article key={`${section.title}-${index}`} className="rounded-lg border border-white/10 bg-black/20 p-3">
+                  <h4 className="text-sm font-semibold text-white/85">{section.title}</h4>
+                  <div className="mt-2 space-y-1 text-xs leading-5 text-white/70">
+                    {section.lines.slice(0, 18).map((line, lineIndex) => (
+                      <p key={`${section.title}-${lineIndex}`}>{line}</p>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-white/45">Run explanation is not available for this run yet.</p>
+          )}
+        </section>
+
+        <section className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-violet-200/80">
+            Iteration Reasoning (Why at each step)
+          </p>
+          {iterationReasoning.length ? (
+            <div className="mt-3 space-y-3">
+              {iterationReasoning.map((block) => (
+                <article key={`iteration-reasoning-${block.iteration}`} className="rounded-lg border border-white/10 bg-black/20 p-3">
+                  <h4 className="text-sm font-semibold text-white/88">
+                    Iteration {block.iteration}
+                  </h4>
+                  <div className="mt-2 space-y-1 text-xs leading-5 text-white/72">
+                    {block.lines.map((line, idx) => (
+                      <p key={`iter-${block.iteration}-line-${idx}`}>{line}</p>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-white/45">Per-iteration reasoning will appear after run completion.</p>
+          )}
+        </section>
+        </div>
+      )}
     </div>
   )
 }

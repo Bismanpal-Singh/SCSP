@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { runAgent } from '../api/agentClient'
-import { mockDecisionLog, mockDecisionTree, mockFinalCandidate, mockIterations } from '../data/mockData'
+import { mockDecisionLog, mockDecisionTree, mockFinalCandidate, mockIterations, mockStructuredDecisionLog } from '../data/mockData'
 import Button from './Button'
 import TabNav from './TabNav'
 import AgentAtWorkPanel from './panels/AgentAtWorkPanel'
@@ -45,6 +45,12 @@ export default function InteractiveInput({ useMock = false }) {
   const [iterations, setIterations] = useState([])
   const [finalCandidate, setFinalCandidate] = useState(null)
   const [decisionLog, setDecisionLog] = useState([])
+  const [portfolio, setPortfolio] = useState([])
+  const [ineligible, setIneligible] = useState([])
+  const [testQueue, setTestQueue] = useState([])
+  const [constraints, setConstraints] = useState({})
+  const [provenanceTree, setProvenanceTree] = useState(null)
+  const [terminalTranscript, setTerminalTranscript] = useState('')
   const [error, setError] = useState(null)
   const [isRunning, setIsRunning] = useState(false)
   const [activeTab, setActiveTab] = useState(0)
@@ -100,6 +106,12 @@ export default function InteractiveInput({ useMock = false }) {
     const completeId = window.setTimeout(() => {
       setFinalCandidate(mockFinalCandidate)
       setDecisionLog(mockDecisionLog)
+      setPortfolio(mockStructuredDecisionLog.portfolio || [])
+      setIneligible(mockStructuredDecisionLog.ineligible || [])
+      setTestQueue(mockStructuredDecisionLog.testQueue || [])
+      setConstraints(mockStructuredDecisionLog.constraints || {})
+      setProvenanceTree(mockStructuredDecisionLog.provenanceTree || null)
+      setTerminalTranscript('')
       setIsRunning(false)
       runRef.current = null
     }, (mockIterations.length + 1) * 1000)
@@ -111,9 +123,15 @@ export default function InteractiveInput({ useMock = false }) {
       onIteration: (iteration) => {
         setIterations((items) => [...items, iteration])
       },
-      onComplete: (candidate, log) => {
-        setFinalCandidate(candidate)
-        setDecisionLog(log)
+      onComplete: (result) => {
+        setFinalCandidate(result?.finalCandidate || null)
+        setDecisionLog(Array.isArray(result?.decisionLog) ? result.decisionLog : [])
+        setPortfolio(result?.portfolio || [])
+        setIneligible(result?.ineligible || [])
+        setTestQueue(result?.testQueue || [])
+        setConstraints(result?.constraints || {})
+        setProvenanceTree(result?.provenanceTree || null)
+        setTerminalTranscript(result?.terminalTranscript || '')
         setIsRunning(false)
         runRef.current = null
       },
@@ -131,6 +149,12 @@ export default function InteractiveInput({ useMock = false }) {
     setIterations([])
     setFinalCandidate(null)
     setDecisionLog([])
+    setPortfolio([])
+    setIneligible([])
+    setTestQueue([])
+    setConstraints({})
+    setProvenanceTree(null)
+    setTerminalTranscript('')
     setError(null)
     setActiveTab(0)
     setIsRunning(true)
@@ -161,6 +185,12 @@ export default function InteractiveInput({ useMock = false }) {
     setIterations([])
     setFinalCandidate(null)
     setDecisionLog([])
+    setPortfolio([])
+    setIneligible([])
+    setTestQueue([])
+    setConstraints({})
+    setProvenanceTree(null)
+    setTerminalTranscript('')
     setError(null)
     setIsRunning(false)
     setActiveTab(0)
@@ -194,6 +224,11 @@ export default function InteractiveInput({ useMock = false }) {
         decisionLog={decisionLog}
         error={error}
         finalCandidate={finalCandidate}
+        portfolio={portfolio}
+        ineligible={ineligible}
+        testQueue={testQueue}
+        constraints={constraints}
+        provenanceTree={provenanceTree}
         isRunning={isRunning}
         iterations={iterations}
         mockDecisionTree={useMock ? mockDecisionTree : null}
@@ -201,6 +236,7 @@ export default function InteractiveInput({ useMock = false }) {
         onRetry={handleRetry}
         onTabChange={setActiveTab}
         query={submittedQuery}
+        terminalTranscript={terminalTranscript}
       />
     )
   }
@@ -275,16 +311,22 @@ export default function InteractiveInput({ useMock = false }) {
 
 function ResultsSurface({
   activeTab,
+  constraints,
   decisionLog,
   error,
   finalCandidate,
+  ineligible,
   isRunning,
   iterations,
   mockDecisionTree,
   onReset,
   onRetry,
   onTabChange,
+  portfolio,
+  provenanceTree,
   query,
+  terminalTranscript,
+  testQueue,
 }) {
   return (
     <div className="mx-auto w-full max-w-[1440px] px-4 opacity-0 animate-fade-in sm:px-8">
@@ -335,14 +377,28 @@ function ResultsSurface({
                 onViewResults={() => onTabChange(1)}
               />
             )}
-            {activeTab === 1 && <ResultsPanel finalCandidate={finalCandidate} />}
+            {activeTab === 1 && (
+              <ResultsPanel
+                finalCandidate={finalCandidate}
+                ineligible={ineligible}
+                isRunning={isRunning}
+                portfolio={portfolio}
+              />
+            )}
             {activeTab === 2 && (
               <DecisionTreePanel
+                constraints={constraints}
                 decisionLog={decisionLog}
                 decisionTree={mockDecisionTree}
                 finalCandidate={finalCandidate}
+                ineligible={ineligible}
+                isRunning={isRunning}
                 iterations={iterations}
+                portfolio={portfolio}
+                provenanceTree={provenanceTree}
                 query={query}
+                terminalTranscript={terminalTranscript}
+                testQueue={testQueue}
               />
             )}
           </div>
