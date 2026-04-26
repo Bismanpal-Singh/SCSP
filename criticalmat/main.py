@@ -46,6 +46,58 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _material_class_from_result(result: dict) -> str:
+    constraints = dict(result.get("constraints", {}) or {})
+    target_props = dict(constraints.get("target_props", {}) or {})
+    return str(target_props.get("material_class", "unknown") or "unknown").strip().lower()
+
+
+def _print_final_summary(result: dict) -> None:
+    best = result.get("best_candidate", {})
+    material_class = _material_class_from_result(result)
+
+    print("\n=== Final Result ===")
+    if not best:
+        print("No viable candidate found.")
+        return
+
+    print(f"Formula: {best.get('formula', best.get('candidate', 'N/A'))}")
+    print(f"Score: {best.get('score', best.get('overall_score', 'N/A'))} / 100")
+
+    stability = best.get("stability_above_hull")
+    if stability is None:
+        stability = "N/A"
+    else:
+        stability = f"{float(stability):.3f} eV/atom"
+
+    supply = best.get("supply_chain_risk", best.get("supply_chain_score", "N/A"))
+    experiment = best.get("recommended_experiment") or best.get("synthesis_recommendation") or "N/A"
+
+    if material_class == "permanent_magnet":
+        print(f"Magnetic moment: {best.get('magnetic_moment', 'N/A')} μB")
+        print(f"Supply chain risk: {supply}% China dependency")
+        print(f"Synthesis route: {experiment}")
+    elif material_class == "semiconductor":
+        print(f"Band gap: {best.get('band_gap', 'N/A')} eV")
+        print(f"Stability: {stability}")
+        print(f"Radiation/electrical test: {experiment}")
+    elif material_class == "protective_coating":
+        print(f"Coating relevance: {best.get('material_family', best.get('family', 'N/A'))}")
+        print(f"Stability: {stability}")
+        print(f"Corrosion test: {experiment}")
+    elif material_class == "battery_material":
+        print(f"Stability: {stability}")
+        print(f"Supply chain risk: {supply}")
+        print(f"Cycling/electrochemical test: {experiment}")
+    elif material_class == "high_temperature_structural_material":
+        print(f"Thermal/stability proxy: {stability}")
+        print(f"Oxidation/mechanical test: {experiment}")
+    else:
+        print(f"Stability: {stability}")
+        print(f"Supply chain risk: {supply}")
+        print(f"Recommended experiment: {experiment}")
+
+
 def main() -> None:
     load_dotenv()
     parser = build_parser()
@@ -64,17 +116,7 @@ def main() -> None:
         use_real_p2=(args.real_p2 or not args.mock_p2),
         allow_mock_fallback=not args.strict_real,
     )
-    best = result.get("best_candidate", {})
-
-    print("\n=== Final Result ===")
-    if not best:
-        print("No viable candidate found.")
-        return
-    print(f"Formula: {best.get('formula')}")
-    print(f"Score: {best.get('score')} / 100")
-    print(f"Magnetic moment: {best.get('magnetic_moment')} μB")
-    print(f"Supply chain risk: {best.get('supply_chain_risk', 'N/A')}% China dependency")
-    print(f"Synthesis route: {best.get('synthesis_recommendation', 'N/A')}")
+    _print_final_summary(result)
 
 
 if __name__ == "__main__":

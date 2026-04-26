@@ -8,8 +8,6 @@ Hour 3+ integration status:
 
 from __future__ import annotations
 
-import json
-
 from .memory import AgentMemory
 from . import mocks
 from ..materials.search import apply_hard_filters
@@ -103,6 +101,102 @@ def _query_safe_spec(spec: dict) -> dict:
     return safe_spec
 
 
+def _as_float(value: object, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def get_material_class(spec: dict) -> str:
+    target_props = dict((spec or {}).get("target_props", {}) or {})
+    return str(target_props.get("material_class", "unknown") or "unknown").strip().lower()
+
+
+def _preserve_original_material_context(spec: dict, original_spec: dict | None) -> dict:
+    """Prevent later generated hypotheses from drifting into a different material class."""
+    if not original_spec:
+        return spec
+    original_class = get_material_class(original_spec)
+    if original_class in {"", "unknown"}:
+        return spec
+
+    preserved = dict(spec or {})
+    target_props = dict(preserved.get("target_props", {}) or {})
+    parsed_class = str(target_props.get("material_class", "unknown") or "unknown").strip().lower()
+    if parsed_class != original_class:
+        preserved = dict(original_spec)
+        preserved["context"] = (spec or {}).get("context", preserved.get("context", ""))
+    return preserved
+
+
+def candidate_tiebreak_value(candidate: dict, material_class: str) -> float:
+    """
+    Return a class-aware tie-break value.
+
+    Score remains the primary signal. This value is only used when scores are
+    tied or very close. Magnetic moment is only a tie-breaker for permanent
+    magnets because it is not a universal performance target.
+    """
+    magnetic_moment = _as_float(candidate.get("magnetic_moment"), 0.0)
+    band_gap = _as_float(candidate.get("band_gap"), 0.0)
+    stability = 100.0 - min(100.0, _as_float(candidate.get("stability_above_hull"), 1.0) * 500.0)
+    supply_safety = 100.0 - min(100.0, _as_float(candidate.get("supply_chain_risk"), 0.0))
+    manufacturability = _as_float(candidate.get("manufacturability_score"), 0.0)
+    evidence = _as_float(candidate.get("evidence_confidence_score"), 0.0)
+    electrochemical_proxy = 100.0 - min(100.0, abs(_as_float(candidate.get("formation_energy"), 0.0)) * 100.0)
+
+    if material_class == "permanent_magnet":
+        return magnetic_moment
+    if material_class == "semiconductor":
+        band_gap_suitability = max(0.0, 100.0 - abs(band_gap - 1.1) * 35.0)
+        return 0.75 * band_gap_suitability + 0.25 * stability
+    if material_class == "protective_coating":
+        return 0.55 * stability + 0.25 * manufacturability + 0.20 * evidence
+    if material_class == "battery_material":
+        return 0.60 * stability + 0.40 * electrochemical_proxy
+    if material_class == "high_temperature_structural_material":
+        return 0.75 * stability + 0.25 * manufacturability
+
+    return 0.50 * stability + 0.30 * supply_safety + 0.20 * manufacturability
+
+
+def sort_eligible_candidates(candidates: list[dict], spec: dict) -> list[dict]:
+    if not candidates:
+        return []
+    material_class = get_material_class(spec)
+    top_score = max(int(c.get("score", 0) or 0) for c in candidates)
+    close_score_window = 2
+
+    def sort_key(candidate: dict) -> tuple[int, float, float]:
+        score = int(candidate.get("score", 0) or 0)
+        # Keep score as primary. Use class-specific tie-break only for tied/close.
+        tiebreak = (
+            candidate_tiebreak_value(candidate, material_class)
+            if (top_score - score) <= close_score_window
+            else 0.0
+        )
+        stability = 100.0 - min(100.0, _as_float(candidate.get("stability_above_hull"), 1.0) * 500.0)
+        return (score, tiebreak, stability)
+
+    return sorted(candidates, key=sort_key, reverse=True)
+
+
+def choose_final_winner(memory_or_result: dict, portfolio: list[dict]) -> dict:
+    if portfolio:
+        top = dict(portfolio[0] or {})
+        candidate_name = str(top.get("candidate", top.get("formula", "")) or "").strip()
+        if candidate_name and not top.get("formula"):
+            top["formula"] = candidate_name
+        scores = dict(top.get("scores", {}) or {})
+        if "score" not in top and "overall" in scores:
+            top["score"] = int(scores.get("overall", 0) or 0)
+        return top
+    return dict((memory_or_result or {}).get("current_best", {}) or {})
+
+
 def _load_p1_functions():
     """Load P1 modules lazily so mock mode works without mp-api installed."""
     from ..materials.search import get_candidates as p1_get_candidates
@@ -123,23 +217,6 @@ def _load_p2_functions():
     return parse_fn, interpret_fn, generate_next_fn, synthesis_fn, portfolio_fn
 
 
-def _load_fast_candidates(cache_path: str, cache_key: str = "magnet-defense") -> list[dict]:
-    with open(cache_path, "r", encoding="utf-8") as f:
-        payload = json.load(f)
-    if isinstance(payload, dict):
-        bucket = payload.get(cache_key, {})
-        if isinstance(bucket, dict):
-            candidates = bucket.get("candidates", [])
-            if isinstance(candidates, list):
-                return [item for item in candidates if isinstance(item, dict)]
-        candidates = payload.get("candidates")
-        if isinstance(candidates, list):
-            return [item for item in candidates if isinstance(item, dict)]
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
-    return []
-
-
 def _latest_portfolio(memory_dict: dict) -> dict:
     history = memory_dict.get("portfolio_history", []) or []
     if not isinstance(history, list) or not history:
@@ -153,9 +230,6 @@ def run_agent(
     use_real_p1: bool = True,
     use_real_p2: bool = True,
     allow_mock_fallback: bool = True,
-    fast_mode: bool = False,
-    demo_cache_path: str = "criticalmat/materials/demo_cache.json",
-    cache_key: str = "magnet-defense",
 ) -> dict:
     """Run iterative search/scoring/reasoning loop."""
     memory = AgentMemory()
@@ -164,14 +238,12 @@ def run_agent(
     scored_candidates: list[dict] = []
     convergence_score_threshold = 95
     min_iterations_before_stop = 2
-    fast_candidates = _load_fast_candidates(demo_cache_path, cache_key=cache_key) if fast_mode else []
     p2_synthesis_fn = None
     p2_portfolio_fn = None
     latest_spec: dict = {}
+    original_spec: dict | None = None
 
     print_header(current_hypothesis)
-    if fast_mode:
-        print_notice("[FAST MODE] Using demo_cache.json candidates (no live MP API call).", style="yellow")
     for iteration in range(1, max_iterations + 1):
         p2_parse_fn = mocks.parse_hypothesis
         p2_interpret_fn = mocks.interpret_results
@@ -199,6 +271,10 @@ def run_agent(
                     print_notice(f"1) Real P2 import failed ({exc}); using mock reasoning.", style="yellow")
 
         spec = p2_parse_fn(current_hypothesis)
+        if original_spec is None:
+            original_spec = dict(spec)
+        else:
+            spec = _preserve_original_material_context(spec, original_spec)
         latest_spec = dict(spec)
         retrieval_spec = _query_safe_spec(spec)
         memory.add_composition(current_hypothesis)
@@ -206,9 +282,7 @@ def run_agent(
 
         p1_score_fn = mocks.score_candidate
         try:
-            if fast_mode:
-                candidates = list(fast_candidates)
-            elif use_real_p1:
+            if use_real_p1:
                 p1_get_candidates, p1_score_fn = _load_p1_functions()
                 candidates = p1_get_candidates(
                     retrieval_spec.get("allowed_elements", []),
@@ -258,14 +332,7 @@ def run_agent(
                 candidate.get("reason", "Hard filter constraint violation"),
             )
 
-        eligible_candidates.sort(
-            key=lambda c: (
-                c.get("score", 0),
-                c.get("magnetic_moment", 0.0),
-                -float(c.get("stability_above_hull", 1.0) or 1.0),
-            ),
-            reverse=True,
-        )
+        eligible_candidates = sort_eligible_candidates(eligible_candidates, spec)
         scored_candidates = list(eligible_candidates) + list(ineligible_candidates)
         memory.record_iteration(iteration, scored_candidates)
 
@@ -279,12 +346,17 @@ def run_agent(
         best_scores.append(top_score)
         print_status_line(f"3) Scored candidates. Best eligible score this round: {top_score}")
         if selected_top:
+            material_class = get_material_class(spec)
             print_candidate(
                 formula=str(selected_top.get("formula", "unknown")),
                 score=int(selected_top.get("score", 0) or 0),
                 magnetic_moment=float(selected_top.get("magnetic_moment", 0.0) or 0.0),
                 supply_chain_risk=int(selected_top.get("supply_chain_risk", 0) or 0),
                 status="ELIGIBLE" if _is_candidate_eligible(selected_top) else "INELIGIBLE",
+                material_class=material_class,
+                band_gap=selected_top.get("band_gap"),
+                stability_above_hull=selected_top.get("stability_above_hull"),
+                material_family=selected_top.get("material_family"),
             )
 
         try:
@@ -322,11 +394,18 @@ def run_agent(
             print_notice("Converged: score did not improve for two iterations.", style="green")
             break
 
-        current_hypothesis = p2_next_fn(memory.to_dict())
+        next_memory = memory.to_dict()
+        next_memory["original_spec"] = dict(original_spec or latest_spec)
+        next_memory["original_material_class"] = get_material_class(original_spec or latest_spec)
+        next_memory["original_hypothesis"] = hypothesis
+        current_hypothesis = p2_next_fn(next_memory)
         print_status_line(f"5) Next hypothesis: {current_hypothesis}")
 
     final_memory = memory.to_dict()
-    best_candidate = final_memory.get("current_best", {})
+    latest_portfolio = _latest_portfolio(final_memory)
+    portfolio_entries = list(latest_portfolio.get("portfolio", []))
+    best_candidate = choose_final_winner(final_memory, portfolio_entries)
+
     if best_candidate and not _is_candidate_eligible(best_candidate):
         eligible_sorted = [candidate for candidate in scored_candidates if _is_candidate_eligible(candidate)]
         if eligible_sorted:
@@ -342,10 +421,8 @@ def run_agent(
                 "to stabilize the target phase; validate experimentally."
             )
         best_candidate["synthesis_recommendation"] = synthesis
-        print_final_result(best_candidate)
+        print_final_result(best_candidate, latest_spec)
 
-    latest_portfolio = _latest_portfolio(final_memory)
-    portfolio_entries = list(latest_portfolio.get("portfolio", []))
     ineligible_entries = list(final_memory.get("ineligible_candidates", []))
     test_queue = list(final_memory.get("experiment_queue", []))
     target_props = dict((latest_spec or {}).get("target_props", {}) or {})

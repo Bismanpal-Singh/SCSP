@@ -12,6 +12,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -215,6 +216,8 @@ def health() -> dict[str, Any]:
 
 @app.post("/run")
 @app.post("/api/run")
+def run(request: RunRequest) -> StreamingResponse:
+    stream = _stream_agent(request.hypothesis)
 def run(request: RunRequest) -> StreamingResponse:
     stream = _stream_agent(request.hypothesis)
     return StreamingResponse(

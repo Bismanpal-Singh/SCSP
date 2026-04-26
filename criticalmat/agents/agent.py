@@ -656,6 +656,7 @@ def generate_next_hypothesis(memory: dict) -> str:
     if memory is None:
         memory = {}
 
+    material_class = str(memory.get("original_material_class", "") or "").strip().lower()
     prompt = generate_next_hypothesis_prompt(memory)
 
     try:
@@ -669,10 +670,36 @@ def generate_next_hypothesis(memory: dict) -> str:
         if not cleaned:
             raise ValueError("Gemini returned an empty next hypothesis.")
 
+        lower = cleaned.lower()
+        if material_class == "battery_material" and any(term in lower for term in ["magnet", "mn-al-c", "permanent magnet"]):
+            return "Explore cobalt-free LiFePO4, NaFePO4, and manganese-rich phosphate cathode families for military drone batteries."
+        if material_class == "semiconductor" and "magnet" in lower:
+            return "Explore SiC, AlN, BN, ZnO, and TiO2 wide-bandgap semiconductor compounds for non-toxic radiation-tolerant defense electronics."
+
         return cleaned
 
     except Exception as exc:
         print(f"[agent.py warning] Gemini next-hypothesis failed. Using fallback. Reason: {exc}")
+        if material_class == "battery_material":
+            return (
+                "Explore cobalt-free LiFePO4, NaFePO4, and manganese-rich phosphate cathode "
+                "families for military drone batteries."
+            )
+        if material_class == "semiconductor":
+            return (
+                "Explore SiC, AlN, BN, ZnO, and TiO2 wide-bandgap semiconductor compounds "
+                "for non-toxic radiation-tolerant defense electronics."
+            )
+        if material_class == "protective_coating":
+            return (
+                "Explore oxide, nitride, carbide, ceramic, SiC, and Zn/Al-rich coating systems "
+                "for corrosion-resistant defense hardware."
+            )
+        if material_class == "high_temperature_structural_material":
+            return (
+                "Explore carbide, nitride, boride, silicide, refractory alloy, and stable oxide "
+                "families for high-temperature structural applications."
+            )
         return (
             "Explore Mn-Al binary and ternary compounds, particularly Mn4Al9 and "
             "MnAl families, which are known rare-earth-free permanent magnet "
@@ -749,6 +776,101 @@ def generate_lab_ready_potential(candidate: dict) -> dict:
 
 def generate_lab_ready_portfolio(candidates: list[dict], spec: dict, memory: dict) -> dict:
     """Build ranked 2.0 portfolio with uncertainty and experiment plan."""
+    def _material_class() -> str:
+        target_props = dict((spec or {}).get("target_props", {}) or {})
+        return str(target_props.get("material_class", "unknown") or "unknown").strip().lower()
+
+    def _is_class_relevant(entry: dict, material_class: str) -> bool:
+        formula = str(entry.get("candidate", entry.get("formula", ""))).strip().lower()
+        family = str(entry.get("family", entry.get("material_family", ""))).strip().lower()
+        band_gap = entry.get("band_gap")
+        stability = float(entry.get("stability_above_hull", 1.0) or 1.0)
+        metallic_tokens = {"fe", "ni", "co", "cu", "al"}
+        coating_tokens = {"oxide", "nitride", "carbide", "ceramic", "tic", "sic", "al", "ti", "ta", "zn"}
+        hts_tokens = {"carbide", "nitride", "boride", "silicide", "oxide", "refractory"}
+
+        if material_class == "protective_coating":
+            if formula in {"s", "s8", "ce"}:
+                return False
+            return any(token in formula or token in family for token in coating_tokens)
+        if material_class == "semiconductor":
+            if band_gap is not None:
+                try:
+                    if float(band_gap) <= 0:
+                        return False
+                except (TypeError, ValueError):
+                    pass
+            if formula in metallic_tokens and "/" not in formula:
+                return False
+            return True
+        if material_class == "battery_material":
+            if stability > 0.2:
+                return False
+            return any(token in family for token in ["oxide", "phosphate", "sulfide", "spinel", "layered", "olivine"])
+        if material_class == "high_temperature_structural_material":
+            return any(token in formula or token in family for token in hts_tokens)
+        return True
+
+    def _class_default_experiment(material_class: str) -> str:
+        if material_class == "permanent_magnet":
+            return "XRD phase identification + VSM/SQUID magnetic characterization after annealing and thermal demagnetization tests."
+        if material_class == "protective_coating":
+            return "EIS + salt spray + potentiodynamic polarization in 3.5% NaCl, with adhesion/scratch and SEM/XRD analysis."
+        if material_class == "semiconductor":
+            return "I-V/C-V with leakage characterization, radiation exposure, thermal cycling, and defect spectroscopy."
+        if material_class == "battery_material":
+            return "Coin-cell charge/discharge cycling + EIS + XRD before/after cycling with thermal safety screening."
+        if material_class == "high_temperature_structural_material":
+            return "Thermal cycling + oxidation testing + hardness/fatigue with TGA/DSC and XRD."
+        return "XRD + SEM + relevant electrochemical/mechanical validation for practical screening."
+
+    def _broaden_families_hint(material_class: str) -> str:
+        mapping = {
+            "permanent_magnet": "Mn-Al, Fe-N, ferrite and intermetallic magnet families",
+            "protective_coating": "oxides, nitrides, carbides, ceramic and Zn/Al-rich coating systems",
+            "semiconductor": "compound semiconductors and stable wide-band-gap materials",
+            "battery_material": "oxide/phosphate/sulfide electrochemical host families",
+            "high_temperature_structural_material": "carbides, nitrides, borides, silicides, refractory alloys",
+        }
+        return mapping.get(material_class, "class-relevant stable compound families")
+
+    def _honest_no_candidate_payload(material_class: str) -> dict:
+        note = f"No high-confidence candidate found; broaden search to {_broaden_families_hint(material_class)}."
+        return {
+            "portfolio": [
+                {
+                    "rank": 1,
+                    "candidate": note,
+                    "formula": note,
+                    "family": "N/A",
+                    "material_family": "N/A",
+                    "scores": {
+                        "scientific_fit": 0,
+                        "stability": 0,
+                        "supply_chain_safety": 0,
+                        "manufacturability": 0,
+                        "evidence_confidence": 0,
+                        "overall": 0,
+                    },
+                    "overall_score": 0,
+                    "scientific_fit_score": 0,
+                    "stability_score": 0,
+                    "supply_chain_score": 0,
+                    "manufacturability_score": 0,
+                    "evidence_confidence": 0,
+                    "main_uncertainty": "No plausible class-relevant candidate in current shortlist.",
+                    "likely_failure_mode": "Forced ranking would produce scientifically irrelevant recommendations.",
+                    "recommended_experiment": _class_default_experiment(material_class),
+                    "rationale": note,
+                    "status": "EXPLORE_LATER",
+                    "eligible": True,
+                }
+            ],
+            "test_queue": [f"1. {_class_default_experiment(material_class)}"],
+            "provenance_tree": {"source": "criticalmat_agent_postcheck", "notes": note},
+        }
+
+    material_class = _material_class()
     eligible = [dict(c) for c in (candidates or []) if bool(c.get("eligible", True))]
     eligible.sort(key=lambda c: int(c.get("score", 0)), reverse=True)
     top = eligible[:5]
@@ -841,42 +963,81 @@ def generate_lab_ready_portfolio(candidates: list[dict], spec: dict, memory: dic
         status = str(entry.get("status", "EXPLORE_LATER")).upper()
         if status not in valid_status:
             status = "EXPLORE_LATER"
-        normalized.append(
-            {
-                "rank": int(entry.get("rank", idx) or idx),
-                "candidate": str(entry.get("candidate", entry.get("formula", f"Candidate-{idx}"))),
-                "family": str(entry.get("family", "Unknown")),
-                "scores": {
-                    "scientific_fit": int(scores.get("scientific_fit", 0) or 0),
-                    "stability": int(scores.get("stability", 0) or 0),
-                    "supply_chain_safety": int(scores.get("supply_chain_safety", 0) or 0),
-                    "manufacturability": int(scores.get("manufacturability", 0) or 0),
-                    "evidence_confidence": int(scores.get("evidence_confidence", 0) or 0),
-                    "overall": int(scores.get("overall", 0) or 0),
-                },
-                "main_uncertainty": str(entry.get("main_uncertainty", "Material-specific uncertainty requires focused validation.")),
-                "likely_failure_mode": str(entry.get("likely_failure_mode", "Performance decay under relevant operating conditions.")),
-                "recommended_experiment": str(entry.get("recommended_experiment", "XRD and VSM characterization workflow.")),
-                "status": status,
-            }
-        )
+        candidate_name = str(entry.get("candidate", entry.get("formula", f"Candidate-{idx}")))
+        family = str(entry.get("family", entry.get("material_family", "Unknown")))
+        scientific_fit = int(entry.get("scientific_fit_score", scores.get("scientific_fit", 0)) or 0)
+        stability_score = int(entry.get("stability_score", scores.get("stability", 0)) or 0)
+        supply_score = int(entry.get("supply_chain_score", scores.get("supply_chain_safety", 0)) or 0)
+        manufacturability_score = int(entry.get("manufacturability_score", scores.get("manufacturability", 0)) or 0)
+        evidence_confidence = int(entry.get("evidence_confidence", scores.get("evidence_confidence", 0)) or 0)
+        overall = int(entry.get("overall_score", scores.get("overall", 0)) or 0)
+        norm_entry = {
+            "rank": int(entry.get("rank", idx) or idx),
+            "candidate": candidate_name,
+            "formula": str(entry.get("formula", candidate_name)),
+            "family": family,
+            "material_family": family,
+            "scores": {
+                "scientific_fit": scientific_fit,
+                "stability": stability_score,
+                "supply_chain_safety": supply_score,
+                "manufacturability": manufacturability_score,
+                "evidence_confidence": evidence_confidence,
+                "overall": overall,
+            },
+            "overall_score": overall,
+            "scientific_fit_score": scientific_fit,
+            "stability_score": stability_score,
+            "supply_chain_score": supply_score,
+            "manufacturability_score": manufacturability_score,
+            "evidence_confidence": evidence_confidence,
+            "main_uncertainty": str(entry.get("main_uncertainty", "Material-specific uncertainty requires focused validation.")),
+            "likely_failure_mode": str(entry.get("likely_failure_mode", "Performance decay under relevant operating conditions.")),
+            "recommended_experiment": str(entry.get("recommended_experiment", _class_default_experiment(material_class))),
+            "rationale": str(entry.get("rationale", "Ranked by class-aware scientific fit, stability, supply safety, and manufacturability.")),
+            "status": status,
+            "eligible": bool(entry.get("eligible", True)),
+            "band_gap": entry.get("band_gap"),
+            "stability_above_hull": entry.get("stability_above_hull"),
+        }
+        if not norm_entry["eligible"] or status == "INELIGIBLE":
+            continue
+        if not _is_class_relevant(norm_entry, material_class):
+            norm_entry["scores"]["overall"] = max(0, norm_entry["scores"]["overall"] - 35)
+            norm_entry["overall_score"] = norm_entry["scores"]["overall"]
+            norm_entry["status"] = "EXPLORE_LATER"
+            norm_entry["rationale"] = (
+                norm_entry["rationale"]
+                + " Down-ranked during post-check because candidate appears weakly matched to target material class."
+            )
+        normalized.append(norm_entry)
 
-    # Enforce status ordering rules.
-    if normalized:
-        normalized.sort(
-            key=lambda row: row["scores"].get("overall", 0),
-            reverse=True,
-        )
-        for idx, row in enumerate(normalized, start=1):
-            row["rank"] = idx
-            if idx == 1:
-                row["status"] = "TEST_FIRST"
-            elif idx == 2:
-                row["status"] = "BACKUP_TEST"
-            elif idx == 3:
-                row["status"] = "SAFE_FALLBACK"
-            elif row["status"] not in {"INELIGIBLE"}:
-                row["status"] = "EXPLORE_LATER"
+    normalized = [entry for entry in normalized if bool(entry.get("eligible", True))]
+    if not normalized:
+        return _honest_no_candidate_payload(material_class)
+
+    normalized.sort(
+        key=lambda row: row["scores"].get("overall", 0),
+        reverse=True,
+    )
+
+    if not _is_class_relevant(normalized[0], material_class):
+        return _honest_no_candidate_payload(material_class)
+
+    normalized = normalized[:5]
+    if len(normalized) >= 3:
+        normalized = normalized[:5]
+
+    for idx, row in enumerate(normalized, start=1):
+        row["rank"] = idx
+        if idx == 1:
+            row["status"] = "TEST_FIRST"
+        elif idx == 2:
+            row["status"] = "BACKUP_TEST"
+        elif idx == 3:
+            row["status"] = "SAFE_FALLBACK"
+        else:
+            row["status"] = "EXPLORE_LATER"
 
     test_queue = list((portfolio_payload or {}).get("test_queue", []) or [])
     if not test_queue:
