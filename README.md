@@ -29,6 +29,8 @@ Fill `.env` with:
 - `MP_API_KEY`
 - `GEMINI_API_KEY`
 - optionally `GEMINI_MODEL`
+- `LLM_PROVIDER=gemini` or `LLM_PROVIDER=ollama`
+- when using Ollama: `OLLAMA_MODEL` and `OLLAMA_HOST`
 
 ## Run
 

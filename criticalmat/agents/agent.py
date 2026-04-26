@@ -20,6 +20,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from google import genai
+import requests
 
 from criticalmat.agents.prompts import (
     parse_hypothesis_prompt,
@@ -34,6 +35,10 @@ from criticalmat.agents.prompts import (
 load_dotenv()
 
 DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-lite-preview")
+DEFAULT_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
+DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud")
+DEFAULT_OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+_PROVIDER_LOGGED = False
 VALID_MATERIAL_CLASSES = {
     "permanent_magnet",
     "semiconductor",
@@ -119,6 +124,53 @@ def _call_gemini(prompt: str, temperature: float = 0.2) -> str:
         raise RuntimeError("Gemini returned an empty text response.")
 
     return text
+
+
+def _call_ollama(prompt: str, temperature: float = 0.2) -> str:
+    """Call Ollama-compatible chat endpoint and return text response."""
+    model = os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+    host = os.getenv("OLLAMA_HOST", DEFAULT_OLLAMA_HOST).rstrip("/")
+    timeout_s = float(os.getenv("OLLAMA_TIMEOUT_S", "60"))
+
+    response = requests.post(
+        f"{host}/api/chat",
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "options": {"temperature": temperature},
+        },
+        timeout=timeout_s,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    text = payload.get("message", {}).get("content", "") if isinstance(payload, dict) else ""
+    text = str(text).strip()
+    if not text:
+        raise RuntimeError("Ollama returned an empty text response.")
+    return text
+
+
+def _call_model(prompt: str, temperature: float = 0.2) -> str:
+    """Provider router for Gemini/Ollama model calls."""
+    global _PROVIDER_LOGGED
+    provider = os.getenv("LLM_PROVIDER", DEFAULT_PROVIDER).strip().lower()
+    if provider not in {"gemini", "ollama"}:
+        provider = "gemini"
+
+    if not _PROVIDER_LOGGED:
+        if provider == "ollama":
+            model = os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+            host = os.getenv("OLLAMA_HOST", DEFAULT_OLLAMA_HOST).rstrip("/")
+            print(f"[agent.py] LLM provider=ollama model={model} host={host}")
+        else:
+            model = os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
+            print(f"[agent.py] LLM provider=gemini model={model}")
+        _PROVIDER_LOGGED = True
+
+    if provider == "ollama":
+        return _call_ollama(prompt, temperature=temperature)
+    return _call_gemini(prompt, temperature=temperature)
 
 def _extract_json(text: str) -> dict[str, Any]:
     """
@@ -427,7 +479,7 @@ def parse_hypothesis(text: str) -> dict:
     prompt = parse_hypothesis_prompt(text)
 
     try:
-        raw_response = _call_gemini(prompt, temperature=0.1)
+        raw_response = _call_model(prompt, temperature=0.1)
         parsed = _extract_json(raw_response)
         return _normalize_spec(parsed)
     except Exception as exc:
@@ -561,7 +613,7 @@ def interpret_results(
     prompt = interpret_results_prompt(candidates_sorted, spec, iteration, ineligible_candidates=ineligible_candidates)
 
     try:
-        return _call_gemini(prompt, temperature=0.3)
+        return _call_model(prompt, temperature=0.3)
     except Exception as exc:
         print(f"[agent.py warning] Gemini interpretation failed. Using fallback. Reason: {exc}")
         eligible = [c for c in candidates_sorted if c.get("eligible", False)]
@@ -607,7 +659,7 @@ def generate_next_hypothesis(memory: dict) -> str:
     prompt = generate_next_hypothesis_prompt(memory)
 
     try:
-        response = _call_gemini(prompt, temperature=0.65)
+        response = _call_model(prompt, temperature=0.65)
         cleaned = response.replace("\n", " ").strip().strip('"').strip("'")
 
         # Keep only the first sentence if Gemini returns extra text.
@@ -632,7 +684,7 @@ def generate_synthesis_recommendation(candidate: dict) -> str:
     """Return a short, realistic synthesis route for the winning candidate."""
     prompt = synthesis_recommendation_prompt(candidate or {})
     try:
-        response = _call_gemini(prompt, temperature=0.25).replace("\n", " ").strip()
+        response = _call_model(prompt, temperature=0.25).replace("\n", " ").strip()
         if not response:
             raise ValueError("Empty synthesis recommendation from Gemini.")
         return response
@@ -659,7 +711,7 @@ def generate_lab_ready_potential(candidate: dict) -> dict:
     """
     prompt = lab_ready_potential_prompt(candidate or {})
     try:
-        raw = _call_gemini(prompt, temperature=0.2)
+        raw = _call_model(prompt, temperature=0.2)
         parsed = _extract_json(raw)
         status = str(parsed.get("status", "medium")).strip().lower()
         if status not in {"high", "medium", "low"}:
@@ -770,7 +822,7 @@ def generate_lab_ready_portfolio(candidates: list[dict], spec: dict, memory: dic
         }
 
     try:
-        raw = _call_gemini(prompt, temperature=0.25)
+        raw = _call_model(prompt, temperature=0.25)
         parsed = _extract_json(raw)
         portfolio_payload = parsed if isinstance(parsed, dict) else {}
     except Exception as exc:
