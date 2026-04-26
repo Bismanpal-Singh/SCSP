@@ -5,22 +5,72 @@ from __future__ import annotations
 
 def parse_hypothesis(text: str) -> dict:
     lower_text = text.lower()
-    banned_elements = []
+    banned_elements: list[str] = []
+    allowed_elements: list[str] = []
+
+    # Explicit banned cues
     if "without neodymium" in lower_text or "no neodymium" in lower_text:
         banned_elements.append("Nd")
     if "without dysprosium" in lower_text or "no dysprosium" in lower_text:
         banned_elements.append("Dy")
+    if "cobalt-free" in lower_text or "without cobalt" in lower_text or "no cobalt" in lower_text:
+        banned_elements.append("Co")
+
+    # Strategic policy cues
+    if "rare-earth-free" in lower_text or "rare earth free" in lower_text or "avoid rare earth" in lower_text:
+        banned_elements.extend(["Nd", "Dy", "Tb", "Pr", "Sm", "Gd"])
+    if "radioactive" in lower_text or "safe" in lower_text:
+        banned_elements.extend(["Ac", "Am", "Pu", "U", "Th", "Np", "Ra", "Po"])
+    if "toxic" in lower_text:
+        banned_elements.extend(["As", "Be", "Cd", "Hg", "Pb", "Tl"])
+
+    # Optional allowed-element hints only when explicitly requested.
+    if "iron-based" in lower_text or "fe-based" in lower_text:
+        allowed_elements.append("Fe")
+    if "manganese" in lower_text:
+        allowed_elements.append("Mn")
+    if "nitride" in lower_text:
+        allowed_elements.append("N")
+    if "ferrite" in lower_text:
+        allowed_elements.extend(["Fe", "O"])
+
+    # Remove duplicates while preserving order.
+    banned_elements = list(dict.fromkeys(banned_elements))
+    allowed_elements = list(dict.fromkeys(allowed_elements))
+
+    if "missile" in lower_text:
+        defense_application = "missile guidance systems"
+    elif "drone" in lower_text:
+        defense_application = "military drone actuators"
+    elif "actuator" in lower_text:
+        defense_application = "precision military actuators"
+    elif "sonar" in lower_text or "submarine" in lower_text:
+        defense_application = "submarine sonar systems"
+    else:
+        defense_application = "critical defense hardware"
 
     return {
-        "allowed_elements": ["Fe", "N", "Co", "Mn"],
+        "allowed_elements": allowed_elements,
         "banned_elements": banned_elements,
         "target_props": {
+            "material_class": "permanent_magnet" if "magnet" in lower_text else "unknown",
+            "needs_magnetism": "magnet" in lower_text or "actuator" in lower_text,
+            "prefer_high_magnetic_moment": "magnet" in lower_text or "actuator" in lower_text,
             "min_magnetic_moment": 2.0,
             "max_formation_energy": 0.1,
-            "max_stability_above_hull": 0.05,
+            "max_stability_above_hull": 0.1,
+            "prefer_low_formation_energy": True,
+            "avoid_rare_earths": "rare-earth-free" in lower_text or "rare earth free" in lower_text,
+            "exclude_radioactive": True,
+            "require_solid_state": True,
+            "require_practical_materials": True,
+            "require_manufacturable": True,
+            "avoid_toxic_elements": "toxic" in lower_text or "safe" in lower_text,
+            "avoid_precious_metals": False,
+            "mp_screen_fetch_limit": 100,
         },
         "context": text,
-        "defense_application": "missile guidance",
+        "defense_application": defense_application,
     }
 
 
@@ -111,9 +161,12 @@ def interpret_results(candidates: list[dict], spec: dict, iteration: int) -> str
     if not candidates:
         return f"Iteration {iteration}: No candidates met the current constraints."
 
-    top = max(candidates, key=lambda c: c.get("score", 0))
+    practical = [c for c in candidates if c.get("is_practical", True)]
+    top_pool = practical if practical else candidates
+    top = max(top_pool, key=lambda c: c.get("score", 0))
+    practical_note = "practical" if practical else "highest-scoring"
     return (
-        f"Iteration {iteration}: {top.get('formula')} leads with score "
+        f"Iteration {iteration}: {top.get('formula')} is the top {practical_note} candidate with score "
         f"{top.get('score', 0)} due to strong magnetic moment and low instability."
     )
 

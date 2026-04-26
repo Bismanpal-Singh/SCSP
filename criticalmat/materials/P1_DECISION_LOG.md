@@ -101,6 +101,12 @@ Goal for P1 (Hours 0-3): deliver working Materials Project retrieval, supply-cha
 - **Why:** Prevent near-identical outputs and improve explainability for P2/P3 reasoning.
 - **Impact:** More varied, interpretable shortlists with explicit safety/practicality metadata.
 
+### 13) Cap MP API `exclude_elements` and enforce full bans locally
+
+- **Decision:** Cap the `exclude_elements` sent to Materials Project API at `MAX_API_EXCLUDE_ELEMENTS=10`, while enforcing the full parsed banned-element set locally after retrieval.
+- **Why:** Large parser-generated banned lists triggered intermittent MP `422 Unprocessable Entity` failures.
+- **Impact:** Improves retrieval reliability without weakening ban enforcement correctness.
+
 ## Validation Evidence
 
 - `get_candidates(...)` live run returned non-zero candidates.

@@ -1,4 +1,6 @@
 google-genai
+langgraph
+ollama
 python-dotenv
 rich
 mp-api

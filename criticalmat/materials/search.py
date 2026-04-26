@@ -18,6 +18,7 @@ from criticalmat.materials.scorer import score_candidate
 # Two-stage "virtual screening": fetch many MP summaries, rank locally, return top `limit`.
 SCREEN_FETCH_DEFAULT = 100
 SCREEN_FETCH_MAX = 500
+MAX_API_EXCLUDE_ELEMENTS = 10
 
 CHINA_CONTROLLED_RISK: dict[str, int] = {
     "Nd": 95,
@@ -156,11 +157,44 @@ def _build_search_kwargs(
     return kwargs
 
 
+def _normalize_element_symbol(element: Any) -> str | None:
+    text = str(element).strip()
+    if not text:
+        return None
+    if len(text) > 2 or not text.isalpha():
+        return None
+    normalized = text[0].upper() + text[1:].lower()
+    return normalized
+
+
+def _prepare_banned_elements(banned_elements: list[str]) -> tuple[list[str], set[str]]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in banned_elements:
+        symbol = _normalize_element_symbol(raw)
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        normalized.append(symbol)
+    # Keep API excludes conservative; enforce full set locally afterward.
+    api_excludes = normalized[:MAX_API_EXCLUDE_ELEMENTS]
+    return api_excludes, set(normalized)
+
+
 def _filter_by_allowed_any(candidates: list[dict], allowed_elements: list[str]) -> list[dict]:
     if not allowed_elements:
         return candidates
     allowed_set = set(allowed_elements)
     filtered = [c for c in candidates if any(el in allowed_set for el in (c.get("elements", []) or []))]
+    return filtered if filtered else candidates
+
+
+def _filter_by_banned_local(candidates: list[dict], banned_full: set[str]) -> list[dict]:
+    if not banned_full:
+        return candidates
+    filtered = [
+        c for c in candidates if not any(el in banned_full for el in (c.get("elements", []) or []))
+    ]
     return filtered if filtered else candidates
 
 
@@ -403,32 +437,36 @@ def get_candidates(
 
     final_limit = max(1, limit)
     fetch_n = _screen_fetch_limit(target_props, final_limit)
+    api_banned, banned_full_set = _prepare_banned_elements(banned_elements)
 
     # MP `elements` behaves as a conjunction; for long allowed lists we query broadly,
     # then apply a local "contains any allowed element" filter.
     primary_allowed = allowed_elements if len(allowed_elements) <= 2 else []
-    docs = _fetch_docs(api_key, primary_allowed, banned_elements, fetch_n)
+    docs = _fetch_docs(api_key, primary_allowed, api_banned, fetch_n)
     if _magnet_task(target_props) and len(allowed_elements) >= 2:
-        docs = docs + _fetch_docs_by_chemsys(api_key, allowed_elements, banned_elements, fetch_n)
+        docs = docs + _fetch_docs_by_chemsys(api_key, allowed_elements, api_banned, fetch_n)
     normalized = [_normalize_candidate(doc) for doc in docs]
+    normalized = _filter_by_banned_local(normalized, banned_full_set)
     normalized = _filter_by_allowed_any(normalized, allowed_elements)
 
     # For magnet tasks, widen once if we still have no multi-element chemistry.
     if _magnet_task(target_props) and not any(len(set(c.get("elements", []) or [])) > 1 for c in normalized):
         widen_n = min(SCREEN_FETCH_MAX, max(fetch_n * 2, 160))
-        broad_docs = _fetch_docs(api_key, [], banned_elements, widen_n)
+        broad_docs = _fetch_docs(api_key, [], api_banned, widen_n)
         broad_norm = _filter_by_allowed_any([_normalize_candidate(doc) for doc in broad_docs], allowed_elements)
+        broad_norm = _filter_by_banned_local(broad_norm, banned_full_set)
         normalized = broad_norm if broad_norm else normalized
 
     # Fallback widening: if strict element-conjunction returns no hits, broaden search.
     if not normalized and allowed_elements:
         widen_n = min(SCREEN_FETCH_MAX, max(fetch_n * 2, 120))
-        broad_docs = _fetch_docs(api_key, [], banned_elements, widen_n)
+        broad_docs = _fetch_docs(api_key, [], api_banned, widen_n)
         broad_norm = [_normalize_candidate(doc) for doc in broad_docs]
         allowed_set = {el for el in allowed_elements}
         normalized = [
             c for c in broad_norm if any(el in allowed_set for el in (c.get("elements", []) or []))
         ]
+        normalized = _filter_by_banned_local(normalized, banned_full_set)
 
     viable = _apply_viability_filters(normalized, target_props)
     enriched = apply_supply_chain_filter(viable)
