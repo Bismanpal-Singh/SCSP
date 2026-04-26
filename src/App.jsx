@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import BackgroundEffect from './components/BackgroundEffect'
-import Cursor from './components/Cursor'
 import IntroLoader from './components/IntroLoader'
 import Navbar from './components/Navbar'
 import { useHashRoute } from './hooks/useHashRoute'
@@ -57,7 +56,6 @@ export default function App() {
         }}
       >
         <BackgroundEffect />
-        <Cursor />
         <Navbar />
         {view === 'home' && <HomePage useMock={USE_MOCK} />}
         {view === 'features' && <FeaturesPage />}
