@@ -8,6 +8,13 @@ __pycache__/
 .venv/
 venv/
 env/
+venv311/
+
+# Node / frontend
+node_modules/
+dist/
+.npm-cache/
+.npm-temp/
 
 # Environment variables / secrets
 .env

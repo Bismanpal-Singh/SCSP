@@ -1,0 +1,105 @@
+// ─────────────────────────────────────────────────────────────
+//  mockData.js
+//  Single source of truth for all fake data while building.
+//  When the real FastAPI backend is ready, this gets replaced
+//  by API responses — but the shape stays exactly the same.
+// ─────────────────────────────────────────────────────────────
+
+export const mockHypothesis =
+  "Find a permanent magnet for missile guidance systems that does not depend on Chinese rare earths."
+
+export const mockIterations = [
+  {
+    num: 1,
+    candidatesTested: 47,
+    bestFormula: "Fe₃Co",
+    bestFormulaPlain: "Fe3Co",
+    score: 34,
+    interpretation:
+      "Cobalt content too high — supply chain risk flagged. Co is on China-controlled list. Magnetic moment is promising but geopolitical score tanks the overall ranking.",
+    nextHypothesis:
+      "Switch to iron-nitrogen compounds. No cobalt. Nitrogen interstitials may stabilize the structure without rare earths.",
+    status: "continue",
+  },
+  {
+    num: 2,
+    candidatesTested: 31,
+    bestFormula: "Fe₈N",
+    bestFormulaPlain: "Fe8N",
+    score: 61,
+    interpretation:
+      "Good magnetic strength, zero China dependency. But it breaks down at 200°C. The missile spec requires stability up to 350°C. Fails on temperature alone.",
+    nextHypothesis:
+      "Try Fe₁₆N₂ — denser nitrogen packing in the alpha-prime phase should improve both stability and coercivity.",
+    status: "continue",
+  },
+  {
+    num: 3,
+    candidatesTested: 22,
+    bestFormula: "Fe₁₆N₂",
+    bestFormulaPlain: "Fe16N2",
+    score: 87,
+    interpretation:
+      "Meets spec on all three axes. Magnetic moment 2.9 μB exceeds minimum. Stable to 400°C. All precursors domestically available. Score converged — recommending this candidate.",
+    nextHypothesis: null,
+    status: "converged",
+  },
+]
+
+export const mockFinalCandidate = {
+  formula:          "Fe₁₆N₂",
+  formulaPlain:     "Fe16N2",
+  fullName:         "Iron Nitride (alpha-prime phase)",
+  score:            87,
+  magneticMoment:   "2.9 μB",
+  thermalStability: "Stable to 400°C",
+  formationEnergy:  "−0.34 eV/atom",
+  supplyChainScore: 96,
+  chinaDependency:  "0%",
+  synthesisRecommendation:
+    "Nitrogen ion implantation into a pure iron thin film at 150°C for 4 hours. Anneal in nitrogen atmosphere at 120°C to stabilize the alpha-prime phase. Target film thickness 200–500 nm for optimal coercivity. Process is compatible with existing US defense manufacturing infrastructure — no new equipment required.",
+  supplyChain: [
+    { element: "Fe",  name: "Iron",                 source: "US domestic",  riskPct: 0,  barPct: 100, safe: true,  replaced: false },
+    { element: "N₂",  name: "Nitrogen",             source: "US domestic",  riskPct: 0,  barPct: 100, safe: true,  replaced: false },
+    { element: "Nd",  name: "Neodymium (replaced)", source: "China (85%)",  riskPct: 85, barPct: 85,  safe: false, replaced: true  },
+  ],
+}
+
+// ── Tab 3: Agent Decision Log ─────────────────────────────────
+// Full log of every candidate the agent touched across all
+// iterations — kept or rejected — with the exact reason why.
+export const mockDecisionLog = [
+  { iteration: 1, formula: "Fe₃Co",  score: 34, decision: "rejected", reason: "Cobalt is on China-controlled list. Supply chain risk score 78/100 — eliminates candidate despite decent magnetic moment." },
+  { iteration: 1, formula: "SmCo₅",  score: 12, decision: "rejected", reason: "Both samarium and cobalt are China-controlled. Eliminated in first filter pass." },
+  { iteration: 1, formula: "MnBi",   score: 28, decision: "rejected", reason: "Bismuth supply chain risk. Magnetic moment drops sharply at room temperature — fails spec." },
+  { iteration: 1, formula: "AlNiCo", score: 41, decision: "rejected", reason: "Coercivity too low for missile guidance application. Standard commercial magnet, not suitable for defense spec." },
+  { iteration: 1, formula: "FePt",   score: 22, decision: "rejected", reason: "Platinum supply chain risk — >70% from South Africa and Russia." },
+  { iteration: 1, formula: "Fe₃N",   score: 38, decision: "rejected", reason: "Magnetic moment below minimum threshold. Formation energy unstable at elevated temperature." },
+  { iteration: 2, formula: "Fe₈N",   score: 61, decision: "rejected", reason: "Good magnetic strength and zero China dependency. Fails on thermal stability — degrades at 200°C, spec requires 350°C." },
+  { iteration: 2, formula: "Fe₄N",   score: 45, decision: "rejected", reason: "Thermal stability adequate but magnetic moment 1.8 μB too low — spec requires 2.5 μB minimum." },
+  { iteration: 2, formula: "Fe₂N",   score: 33, decision: "rejected", reason: "High nitrogen content destabilizes crystal structure at target operating temperature." },
+  { iteration: 2, formula: "FeN",    score: 29, decision: "rejected", reason: "Antiferromagnetic at room temperature — no net magnetic moment. Unusable for permanent magnet application." },
+  { iteration: 3, formula: "Fe₁₆N₂", score: 87, decision: "selected", reason: "Meets all three spec requirements. Magnetic moment 2.9 μB, stable to 400°C, zero China dependency. Agent converged — recommended." },
+  { iteration: 3, formula: "Fe₁₂N",  score: 71, decision: "rejected", reason: "Close to spec on magnetic moment but hull distance suggests metastability — synthesis at scale would be unreliable." },
+  { iteration: 3, formula: "Fe₈N₂",  score: 58, decision: "rejected", reason: "Thermal stability improved over Fe₈N but still below 350°C threshold. Formation energy also unfavorable." },
+]
+
+export const mockLogSummary = {
+  totalCandidates:  100,
+  totalRejected:    99,
+  totalSelected:    1,
+  iterationsRun:    3,
+  convergenceScore: 87,
+}
+
+// ── App-level state shape ─────────────────────────────────────
+export const mockAppState = {
+  isDemo:         true,
+  isRunning:      false,
+  isComplete:     true,
+  hypothesis:     mockHypothesis,
+  iterations:     mockIterations,
+  finalCandidate: mockFinalCandidate,
+  decisionLog:    mockDecisionLog,
+  logSummary:     mockLogSummary,
+}

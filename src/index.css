@@ -1,0 +1,130 @@
+/* Fonts (must precede @tailwind for valid CSS order) */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Design tokens — black + neon purple ──────────── */
+:root {
+  --navy:        #000000;
+  --surface:     #0a0a0c;
+  --surface2:    #12121a;
+  --border:      #1e1e28;
+  --border-dim:  #14141a;
+
+  /* primary accent + gradient stops */
+  --neon:        #c084fc;
+  --neon-bright: #e879f9;
+  --p2:          #a855f7;
+  --p4:          #7c3aed;
+  --green:       #4ade80;
+  --amber:       #fbbf24;
+  --pink:        #f472b6;
+  --red:         #f87171;
+  --blue:        #60a5fa;
+
+  --text:        #f1f0f5;
+  --text-dim:    #a1a0ab;
+  --text-muted:  #6b6a76;
+
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  --font-sans: 'Inter', system-ui, sans-serif;
+}
+
+/* ── Base reset ────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: #0a0a0f;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Scrollbar styling ─────────────────────────────── */
+::-webkit-scrollbar       { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--navy); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3a3250; }
+
+/* ── Utility classes used across components ────────── */
+.mono { font-family: var(--font-mono); }
+
+.neon-text  { color: var(--neon); }
+.green-text { color: var(--green); }
+.amber-text { color: var(--amber); }
+.pink-text  { color: var(--pink); }
+.red-text   { color: var(--red); }
+.dim-text   { color: var(--text-dim); }
+.muted-text { color: var(--text-muted); }
+
+.surface-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.label-tag {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+}
+
+/* ── Score color helpers ───────────────────────────── */
+.score-low  { color: var(--red); }
+.score-mid  { color: var(--amber); }
+.score-high { color: var(--green); }
+
+/* ── Progress bar fill colors ──────────────────────── */
+.fill-low  { background: var(--red); }
+.fill-mid  { background: var(--amber); }
+.fill-high { background: var(--green); }
+
+/* ── Pulse animation for live indicator ────────────── */
+@keyframes pulse {
+  0%, 100% { opacity: 1;   transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.75); }
+}
+.pulse-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* ── Fade-in for cards appearing ────────────────────── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-up {
+  animation: fadeUp 0.35s ease forwards;
+}
+
+/* ── Responsive helpers ─────────────────────────────── */
+.panel-grid {
+  display: grid;
+  gap: 18px;
+}
+@media (min-width: 768px) {
+  .panel-grid-2 { grid-template-columns: 1fr 1fr; }
+  .panel-grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+}
+.col-span-full { grid-column: 1 / -1; }
