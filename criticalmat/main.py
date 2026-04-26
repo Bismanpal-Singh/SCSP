@@ -1,4 +1,4 @@
-"""CLI entry point for CriticalMat mock loop."""
+"""CLI entry point for Mantle AI autonomous loop."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from .demo import get_candidate_property
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="CriticalMat autonomous loop")
+    parser = argparse.ArgumentParser(description="Mantle AI autonomous loop")
     parser.add_argument(
         "--hypothesis",
         type=str,

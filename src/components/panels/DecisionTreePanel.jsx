@@ -283,6 +283,7 @@ function formatTranscriptLine(line = '') {
 function isNoiseLine(line = '') {
   const value = String(line || '').trim()
   if (!value) return true
+  if (/^\[agent\.py\]\s+LLM provider=/i.test(value)) return true
   if (/^[-=]{3,}$/.test(value)) return true
   if (/^[|]+$/.test(value)) return true
   if (/^#{1,6}\s*$/.test(value)) return true

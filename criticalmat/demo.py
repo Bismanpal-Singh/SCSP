@@ -1,4 +1,4 @@
-"""Rich terminal UI helpers for CriticalMat demo runs."""
+"""Rich terminal UI helpers for Mantle AI demo runs."""
 
 from __future__ import annotations
 
