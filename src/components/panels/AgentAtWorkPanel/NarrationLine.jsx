@@ -1,5 +1,6 @@
 import React from 'react'
 import { motion } from 'framer-motion'
+import MaterialLink from '../../MaterialLink'
 
 function toneClass(tone) {
   if (tone === 'pivot') return 'text-cyan-200'
@@ -8,7 +9,37 @@ function toneClass(tone) {
   return 'text-white/86'
 }
 
-export default function NarrationLine({ isActive = false, text, tone = 'default' }) {
+const FORMULA_PATTERN = /([A-Z][a-z]?[0-9₀-₉]*(?:[A-Z][a-z]?[0-9₀-₉]*)+)/g
+
+function renderWithMaterialLinks(text, formulaMpIdMap = {}) {
+  const value = String(text || '')
+  const parts = []
+  let lastIndex = 0
+  let match
+
+  while ((match = FORMULA_PATTERN.exec(value)) !== null) {
+    const formula = match[0]
+    const start = match.index
+    if (start > lastIndex) {
+      parts.push(value.slice(lastIndex, start))
+    }
+    const mpId = formulaMpIdMap[formula]
+    parts.push(
+      <MaterialLink key={`${formula}-${start}`} mpId={mpId} formula={formula}>
+        {formula}
+      </MaterialLink>,
+    )
+    lastIndex = start + formula.length
+  }
+
+  if (lastIndex < value.length) {
+    parts.push(value.slice(lastIndex))
+  }
+
+  return parts.length ? parts : value
+}
+
+export default function NarrationLine({ isActive = false, text, tone = 'default', formulaMpIdMap = {} }) {
   return (
     <motion.p
       layout
@@ -28,7 +59,7 @@ export default function NarrationLine({ isActive = false, text, tone = 'default'
           aria-hidden
         />
       )}
-      {text}
+      {renderWithMaterialLinks(text, formulaMpIdMap)}
     </motion.p>
   )
 }

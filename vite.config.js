@@ -13,6 +13,11 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
+      },
+      '/mp-api': {
+        target: 'https://api.materialsproject.org',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/mp-api/, ''),
       }
     }
   }

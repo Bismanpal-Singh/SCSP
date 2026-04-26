@@ -3,24 +3,26 @@ import { AnimatePresence, motion } from 'framer-motion'
 import Button from '../Button'
 import NarrationLine from './AgentAtWorkPanel/NarrationLine'
 import { narrateFinal, narrateIteration, narrationTone } from './AgentAtWorkPanel/narrate'
+import MaterialLink from '../MaterialLink'
 
 const LINE_REVEAL_DELAY_MS = 120
 const MAX_VISIBLE_LINES = 80
 
 function buildScript(iterations, finalCandidate) {
-  const lines = [
+  const base = [
     {
       id: 'start-reading',
-      text: 'Reading your hypothesis…',
+      text: 'Reading your hypothesis...',
       tone: 'default',
     },
     {
       id: 'start-database',
-      text: 'Searching 150,000 materials in the Materials Project database…',
+      text: 'Searching 150,000 materials in the Materials Project database...',
       tone: 'default',
     },
   ]
 
+  const lines = [...base]
   iterations.forEach((iteration, index) => {
     const iterId = String(iteration?.num ?? iteration?.iteration ?? index + 1)
     narrateIteration(iteration, index === 0, iterations[index - 1]).forEach((text, lineIndex) => {
@@ -35,11 +37,13 @@ function buildScript(iterations, finalCandidate) {
 
   if (finalCandidate) {
     narrateFinal(finalCandidate).forEach((text, index) => {
-      lines.push({
-        id: `final-${index}`,
-        text,
-        tone: narrationTone(text),
-      })
+      if (lines.length < MAX_SCRIPT_LINES) {
+        lines.push({
+          id: `final-${index}`,
+          text,
+          tone: narrationTone(text),
+        })
+      }
     })
   }
 
@@ -89,7 +93,11 @@ function ResultsCard({ finalCandidate, onViewReasoning, onViewResults, onToggleL
         <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-4">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <p className="font-mono text-3xl font-bold text-white">{finalCandidate.formula}</p>
+              <p className="font-mono text-3xl font-bold text-white">
+                <MaterialLink mpId={finalCandidate.mpId} formula={finalCandidate.formula}>
+                  {finalCandidate.formula}
+                </MaterialLink>
+              </p>
               {finalCandidate.fullName && (
                 <p className="mt-1 text-sm text-white/48">{finalCandidate.fullName}</p>
               )}
@@ -100,13 +108,12 @@ function ResultsCard({ finalCandidate, onViewReasoning, onViewResults, onToggleL
           </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <WinnerMetric label="Magnetic moment" value={finalCandidate.magneticMoment} />
             <WinnerMetric label="Thermal stability" value={finalCandidate.thermalStability} />
             <WinnerMetric label="China dependency" value={finalCandidate.chinaDependency} />
           </div>
 
           <p className="mt-4 text-sm leading-6 text-white/66">
-            Supply chain looks clean: {finalCandidate.supplyChainScore ? `${finalCandidate.supplyChainScore}/100 supply chain score` : 'no major dependency flags surfaced'}.
+            Convergence notes indicate no major dependency flags surfaced.
           </p>
         </div>
 
@@ -147,6 +154,18 @@ export default function AgentAtWorkPanel({
   const [scriptCursor, setScriptCursor] = useState(0)
   const [showLogs, setShowLogs] = useState(false)
   const script = useMemo(() => buildScript(iterations, finalCandidate), [iterations, finalCandidate])
+  const formulaMpIdMap = useMemo(() => {
+    const map = {}
+    iterations.forEach((iteration) => {
+      if (iteration?.bestFormula && iteration?.bestCandidate?.mpId) {
+        map[iteration.bestFormula] = iteration.bestCandidate.mpId
+      }
+    })
+    if (finalCandidate?.formula && finalCandidate?.mpId) {
+      map[finalCandidate.formula] = finalCandidate.mpId
+    }
+    return map
+  }, [finalCandidate, iterations])
   const isComplete = Boolean(finalCandidate) && !isRunning
 
   useEffect(() => {
@@ -160,6 +179,7 @@ export default function AgentAtWorkPanel({
       setVisibleLines([])
       setCompletedLineIds(new Set())
       setScriptCursor(0)
+      setShowResults(false)
       return
     }
 
@@ -170,8 +190,24 @@ export default function AgentAtWorkPanel({
       setVisibleLines([])
       setCompletedLineIds(new Set())
       setScriptCursor(0)
+      setShowResults(false)
     }
   }, [script])
+
+  useEffect(() => {
+    if (!isComplete) {
+      setShowResults(false)
+      return undefined
+    }
+
+    // Keep narration visible until the final scripted line has finished typing.
+    if (!finalLineId || !completedLineIds.has(finalLineId)) {
+      return undefined
+    }
+
+    const id = window.setTimeout(() => setShowResults(true), 550)
+    return () => window.clearTimeout(id)
+  }, [completedLineIds, finalLineId, isComplete])
 
   useEffect(() => {
     if (visibleLines.length === 0 && script.length > 0 && scriptCursor === 0) {
@@ -270,10 +306,10 @@ export default function AgentAtWorkPanel({
           ) : (
             <motion.div
               key="narration"
-              className="flex flex-col justify-start gap-3 pr-28"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              className="h-full overflow-y-auto pr-28"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.6 }}
             >
               <AnimatePresence initial={false}>

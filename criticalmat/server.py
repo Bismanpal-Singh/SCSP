@@ -90,6 +90,30 @@ def _formula_plain(formula: str | None) -> str | None:
     return formula.translate(subscript_digits)
 
 
+def clean_terminal_output(text: str) -> str:
+    """Strip terminal formatting noise for web rendering."""
+    if not text:
+        return ""
+
+    text = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    text = re.sub(r"[\u2500-\u257f]", "", text)
+    text = re.sub(r"[═║╔╗╚╝│┃─━┌┐└┘┤├┬┴┼╠╣╦╩╬]", "", text)
+    text = re.sub(r"^[=\-_]{3,}.*$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
+    text = "\n".join(line.rstrip() for line in text.splitlines())
+    return text.strip()
+
+
+def _clean_text_fields(value: Any) -> Any:
+    if isinstance(value, str):
+        return clean_terminal_output(value)
+    if isinstance(value, list):
+        return [_clean_text_fields(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _clean_text_fields(item) for key, item in value.items()}
+    return value
+
+
 def _candidate_to_frontend(candidate: dict[str, Any]) -> dict[str, Any]:
     normalized = _to_camel(candidate)
     formula = normalized.get("formula")
@@ -198,7 +222,8 @@ def _run_agent_streaming(hypothesis: str, event_queue: queue.Queue) -> None:
                     "bestFormulaPlain": _formula_plain(final_candidate.get("formula")),
                     "score": int(final_candidate.get("score", 0) or 0),
                     "bestCandidate": _candidate_to_frontend(final_candidate),
-                    "interpretation": "Structured 2.0 portfolio generated from full agent loop.",
+                    "interpretation": clean_terminal_output("Structured 2.0 portfolio generated from full agent loop."),
+                    "reasoning": clean_terminal_output("Portfolio and constraint analysis complete."),
                     "nextHypothesis": None,
                     "status": "converged",
                 },
@@ -210,7 +235,7 @@ def _run_agent_streaming(hypothesis: str, event_queue: queue.Queue) -> None:
                 "complete",
                 {
                     "finalCandidate": _candidate_to_frontend(final_candidate),
-                    "decisionLog": {
+                    "decisionLog": _clean_text_fields({
                         "mission": result.get("mission", hypothesis),
                         "constraints": constraints,
                         "portfolio": portfolio,
@@ -218,8 +243,8 @@ def _run_agent_streaming(hypothesis: str, event_queue: queue.Queue) -> None:
                         "test_queue": test_queue,
                         "agent_trace": agent_trace,
                         "provenance_tree": provenance_tree,
-                    },
-                    "terminalTranscript": terminal_transcript,
+                    }),
+                    "terminalTranscript": clean_terminal_output(terminal_transcript),
                 },
             )
         )

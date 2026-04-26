@@ -35,9 +35,9 @@ export default function App() {
         <main
           style={{
             width: '100%',
-            maxWidth: 1600,
+            maxWidth: '100%',
             margin: '0 auto',
-            padding: '0 32px',
+            padding: '0 16px',
             boxSizing: 'border-box',
           }}
         >

@@ -1,4 +1,5 @@
 import React from 'react'
+import MaterialLink from '../MaterialLink'
 
 export default function DecisionLogPanel({ decisionLog = [] }) {
   if (decisionLog.length === 0) {
@@ -23,7 +24,11 @@ export default function DecisionLogPanel({ decisionLog = [] }) {
                 <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/38">
                   Iteration {entry.iteration}
                 </p>
-                <h3 className="mt-1 text-base font-semibold text-white">{entry.formula}</h3>
+                <h3 className="mt-1 text-base font-semibold text-white">
+                  <MaterialLink mpId={entry.mpId} formula={entry.formula}>
+                    {entry.formula}
+                  </MaterialLink>
+                </h3>
               </div>
               <div className="flex items-center gap-3 font-mono text-xs">
                 <span className={selected ? 'text-emerald-300/90' : 'text-rose-300/85'}>

@@ -56,6 +56,7 @@ export const mockFinalCandidate = {
   formationEnergy:  "−0.34 eV/atom",
   supplyChainScore: 96,
   chinaDependency:  "0%",
+  mpId:             "mp-fe16n2",
   synthesisRecommendation:
     "Nitrogen ion implantation into a pure iron thin film at 150°C for 4 hours. Anneal in nitrogen atmosphere at 120°C to stabilize the alpha-prime phase. Target film thickness 200–500 nm for optimal coercivity. Process is compatible with existing US defense manufacturing infrastructure — no new equipment required.",
   supplyChain: [
@@ -69,19 +70,19 @@ export const mockFinalCandidate = {
 // Full log of every candidate the agent touched across all
 // iterations — kept or rejected — with the exact reason why.
 export const mockDecisionLog = [
-  { iteration: 1, formula: "Fe₃Co",  score: 34, decision: "rejected", reason: "Cobalt is on China-controlled list. Supply chain risk score 78/100 — eliminates candidate despite decent magnetic moment." },
-  { iteration: 1, formula: "SmCo₅",  score: 12, decision: "rejected", reason: "Both samarium and cobalt are China-controlled. Eliminated in first filter pass." },
-  { iteration: 1, formula: "MnBi",   score: 28, decision: "rejected", reason: "Bismuth supply chain risk. Magnetic moment drops sharply at room temperature — fails spec." },
-  { iteration: 1, formula: "AlNiCo", score: 41, decision: "rejected", reason: "Coercivity too low for missile guidance application. Standard commercial magnet, not suitable for defense spec." },
-  { iteration: 1, formula: "FePt",   score: 22, decision: "rejected", reason: "Platinum supply chain risk — >70% from South Africa and Russia." },
-  { iteration: 1, formula: "Fe₃N",   score: 38, decision: "rejected", reason: "Magnetic moment below minimum threshold. Formation energy unstable at elevated temperature." },
-  { iteration: 2, formula: "Fe₈N",   score: 61, decision: "rejected", reason: "Good magnetic strength and zero China dependency. Fails on thermal stability — degrades at 200°C, spec requires 350°C." },
-  { iteration: 2, formula: "Fe₄N",   score: 45, decision: "rejected", reason: "Thermal stability adequate but magnetic moment 1.8 μB too low — spec requires 2.5 μB minimum." },
-  { iteration: 2, formula: "Fe₂N",   score: 33, decision: "rejected", reason: "High nitrogen content destabilizes crystal structure at target operating temperature." },
-  { iteration: 2, formula: "FeN",    score: 29, decision: "rejected", reason: "Antiferromagnetic at room temperature — no net magnetic moment. Unusable for permanent magnet application." },
-  { iteration: 3, formula: "Fe₁₆N₂", score: 87, decision: "selected", reason: "Meets all three spec requirements. Magnetic moment 2.9 μB, stable to 400°C, zero China dependency. Agent converged — recommended." },
-  { iteration: 3, formula: "Fe₁₂N",  score: 71, decision: "rejected", reason: "Close to spec on magnetic moment but hull distance suggests metastability — synthesis at scale would be unreliable." },
-  { iteration: 3, formula: "Fe₈N₂",  score: 58, decision: "rejected", reason: "Thermal stability improved over Fe₈N but still below 350°C threshold. Formation energy also unfavorable." },
+  { iteration: 1, formula: "Fe₃Co",  score: 34, decision: "rejected", reason: "Cobalt is on China-controlled list. Supply chain risk score 78/100 — eliminates candidate despite decent magnetic moment.", mpId: "mp-fe3co" },
+  { iteration: 1, formula: "SmCo₅",  score: 12, decision: "rejected", reason: "Both samarium and cobalt are China-controlled. Eliminated in first filter pass.", mpId: "mp-smco5" },
+  { iteration: 1, formula: "MnBi",   score: 28, decision: "rejected", reason: "Bismuth supply chain risk. Magnetic moment drops sharply at room temperature — fails spec.", mpId: "mp-mnbi" },
+  { iteration: 1, formula: "AlNiCo", score: 41, decision: "rejected", reason: "Coercivity too low for missile guidance application. Standard commercial magnet, not suitable for defense spec.", mpId: "mp-alnico" },
+  { iteration: 1, formula: "FePt",   score: 22, decision: "rejected", reason: "Platinum supply chain risk — >70% from South Africa and Russia.", mpId: "mp-fept" },
+  { iteration: 1, formula: "Fe₃N",   score: 38, decision: "rejected", reason: "Magnetic moment below minimum threshold. Formation energy unstable at elevated temperature.", mpId: "mp-fe3n" },
+  { iteration: 2, formula: "Fe₈N",   score: 61, decision: "rejected", reason: "Good magnetic strength and zero China dependency. Fails on thermal stability — degrades at 200°C, spec requires 350°C.", mpId: "mp-fe8n" },
+  { iteration: 2, formula: "Fe₄N",   score: 45, decision: "rejected", reason: "Thermal stability adequate but magnetic moment 1.8 μB too low — spec requires 2.5 μB minimum.", mpId: "mp-fe4n" },
+  { iteration: 2, formula: "Fe₂N",   score: 33, decision: "rejected", reason: "High nitrogen content destabilizes crystal structure at target operating temperature.", mpId: "mp-fe2n" },
+  { iteration: 2, formula: "FeN",    score: 29, decision: "rejected", reason: "Antiferromagnetic at room temperature — no net magnetic moment. Unusable for permanent magnet application.", mpId: "mp-fen" },
+  { iteration: 3, formula: "Fe₁₆N₂", score: 87, decision: "selected", reason: "Meets all three spec requirements. Magnetic moment 2.9 μB, stable to 400°C, zero China dependency. Agent converged — recommended.", mpId: "mp-fe16n2" },
+  { iteration: 3, formula: "Fe₁₂N",  score: 71, decision: "rejected", reason: "Close to spec on magnetic moment but hull distance suggests metastability — synthesis at scale would be unreliable.", mpId: "mp-fe12n" },
+  { iteration: 3, formula: "Fe₈N₂",  score: 58, decision: "rejected", reason: "Thermal stability improved over Fe₈N but still below 350°C threshold. Formation energy also unfavorable.", mpId: "mp-fe8n2" },
 ]
 
 export const mockStructuredDecisionLog = {
@@ -96,6 +97,7 @@ export const mockStructuredDecisionLog = {
     {
       rank: 1,
       candidate: "Mn4Al9",
+      mpId: "mp-mn4al9",
       family: "Mn-Al",
       status: "TEST_FIRST",
       scores: {
@@ -113,6 +115,7 @@ export const mockStructuredDecisionLog = {
     {
       rank: 2,
       candidate: "Mn2O3",
+      mpId: "mp-mn2o3",
       family: "Fe-O",
       status: "BACKUP_TEST",
       scores: {
@@ -130,6 +133,7 @@ export const mockStructuredDecisionLog = {
     {
       rank: 3,
       candidate: "Fe2O3",
+      mpId: "mp-fe2o3",
       family: "Fe-O",
       status: "SAFE_FALLBACK",
       scores: {
@@ -146,7 +150,7 @@ export const mockStructuredDecisionLog = {
     },
   ],
   ineligible: [
-    { formula: "Nd2Fe14B", reason: "Contains banned element: Nd" },
+    { formula: "Nd2Fe14B", reason: "Contains banned element: Nd", mpId: "mp-nd2fe14b" },
   ],
   testQueue: [
     "VSM characterization of Mn4Al9 to determine magnetic anisotropy and coercivity.",

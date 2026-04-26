@@ -53,12 +53,12 @@ function toolCallLine(iter = {}) {
 
 function openingLine(iter, isFirst, previousIteration) {
   if (isFirst) {
-    return "Searching for permanent magnets that don't need rare earth elements…"
+    return "Searching for permanent magnets that do not require rare earth elements."
   }
 
   const pivot = previousIteration?.nextHypothesis || iter.nextHypothesis
   if (pivot) {
-    return `${humanize(pivot)}…`
+    return `${humanize(pivot)}.`
   }
 
   return `Trying a new direction around ${iter.bestFormula || 'the best option so far'}…`
@@ -85,7 +85,7 @@ export function narrateIteration(iter, isFirst, previousIteration = null) {
 
 export function narrateFinal(finalCandidate = {}) {
   const formula = finalCandidate.formula || 'The final option'
-  return [`Found it: ${formula} at score ${finalCandidate.score ?? 'n/a'}. Putting the report together now…`]
+  return [`Found it: ${formula} at score ${finalCandidate.score ?? 'n/a'}. Putting the report together now.`]
 }
 
 export function narrationTone(text = '') {

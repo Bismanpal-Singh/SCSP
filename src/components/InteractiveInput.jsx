@@ -398,7 +398,7 @@ function ResultsSurface({
       : []
 
   return (
-    <div className="mx-auto w-full max-w-[1440px] px-4 opacity-0 animate-fade-in sm:px-8">
+    <div className="w-full px-2 opacity-0 animate-fade-in sm:px-4 lg:px-6">
       <div className="overflow-hidden rounded-2xl border border-violet-500/20 bg-[#050509]/90 shadow-[0_0_44px_rgba(139,92,246,0.12),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-xl">
         <div className="border-b border-white/[0.07] bg-white/[0.035] px-4 py-3">
           <div className="text-left">
@@ -496,12 +496,14 @@ function ResultsSurface({
               />
             )}
             {activeTab === 1 && (
-              <ResultsPanel
-                finalCandidate={finalCandidate}
-                ineligible={ineligible}
-                isRunning={isRunning}
-                portfolio={portfolio}
-              />
+              <div className="space-y-5">
+                <ResultsPanel
+                  finalCandidate={finalCandidate}
+                  ineligible={ineligible}
+                  isRunning={isRunning}
+                  portfolio={portfolio}
+                />
+              </div>
             )}
             {activeTab === 2 && (
               <DecisionTreePanel
