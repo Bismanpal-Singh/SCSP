@@ -1,6 +1,45 @@
 import React from 'react'
 import MaterialLink from '../MaterialLink'
 
+const HEADER_HELP = {
+  score: {
+    definition: 'Final candidate overall score shown on the card.',
+    formula: 'overall = 0.30*sci_fit + 0.20*stability + 0.20*supply_chain_safety + 0.15*manufacturability + 0.15*evidence_confidence',
+  },
+  formationEnergy: {
+    definition: 'Formation energy per atom. Lower values are generally more stable.',
+    formula: 'E_form = (E_total(material) - sum(n_i*mu_i)) / N_atoms',
+  },
+  rank: {
+    definition: 'Position in the sorted portfolio list.',
+    formula: 'Rank 1 is highest overall score after eligibility filters.',
+  },
+  candidate: {
+    definition: 'Material formula for the portfolio entry.',
+    formula: 'Candidate identifier from search/scoring output.',
+  },
+  status: {
+    definition: 'Agent decision label for test priority.',
+    formula: 'TEST_FIRST=top eligible, BACKUP_TEST=second, SAFE_FALLBACK=stable backup.',
+  },
+  overall: {
+    definition: 'Final weighted score used for ordering.',
+    formula: 'overall = 0.30*sci_fit + 0.20*stability + 0.20*supply_chain_safety + 0.15*manufacturability + 0.15*evidence_confidence',
+  },
+  sciFit: {
+    definition: 'Domain-fit score for mission relevance.',
+    formula: 'Class-aware; for permanent magnets this is primarily magnetic-performance fit.',
+  },
+  stability: {
+    definition: 'Stability score for thermodynamic and structural robustness.',
+    formula: 'Derived from stability indicators such as energy-above-hull.',
+  },
+  confidence: {
+    definition: 'Evidence confidence score for data quality and completeness.',
+    formula: 'Higher when MP metadata and computed properties are complete and coherent.',
+  },
+}
+
 function statusBadgeTone(status = '') {
   if (status === 'TEST_FIRST') return 'border-emerald-400/30 bg-emerald-500/15 text-emerald-100'
   if (status === 'BACKUP_TEST') return 'border-amber-400/30 bg-amber-500/15 text-amber-100'
@@ -64,6 +103,12 @@ export default function ResultsPanel({ finalCandidate, portfolio = [], ineligibl
   }
 
   const dedupedIneligible = dedupeIneligible(ineligible)
+  const resolvedFormationEnergy = (
+    finalCandidate?.formationEnergy
+    ?? finalCandidate?.formation_energy
+    ?? finalCandidate?.formationEnergyPerAtom
+    ?? finalCandidate?.formation_energy_per_atom
+  )
 
   return (
     <div className="w-full space-y-5 text-left">
@@ -82,9 +127,14 @@ export default function ResultsPanel({ finalCandidate, portfolio = [], ineligibl
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Metric label="Score" value={finalCandidate.score} />
+        <Metric label="Score" value={finalCandidate.score} help={HEADER_HELP.score} />
         <Metric label="Thermal stability" value={finalCandidate.thermalStability} />
-        <Metric label="Formation energy" value={finalCandidate.formationEnergy} />
+        <Metric
+          label="Formation energy"
+          value={resolvedFormationEnergy ?? 'N/A'}
+          help={HEADER_HELP.formationEnergy}
+          forceShow
+        />
         <Metric label="China dependency" value={finalCandidate.chinaDependency} />
       </div>
 
@@ -111,13 +161,13 @@ export default function ResultsPanel({ finalCandidate, portfolio = [], ineligibl
               <table className="w-full min-w-[760px] text-left text-xs">
                 <thead className="text-white/45">
                   <tr className="border-b border-white/10">
-                    <th className="py-2 pr-3">Rank</th>
-                    <th className="py-2 pr-3">Candidate</th>
-                    <th className="py-2 pr-3">Status</th>
-                    <th className="py-2 pr-3">Overall</th>
-                    <th className="py-2 pr-3">Sci Fit</th>
-                    <th className="py-2 pr-3">Stability</th>
-                    <th className="py-2 pr-3">Confidence</th>
+                    <th className="py-2 pr-3"><HeaderHelpLabel label="Rank" help={HEADER_HELP.rank} /></th>
+                    <th className="py-2 pr-3"><HeaderHelpLabel label="Candidate" help={HEADER_HELP.candidate} /></th>
+                    <th className="py-2 pr-3"><HeaderHelpLabel label="Status" help={HEADER_HELP.status} /></th>
+                    <th className="py-2 pr-3"><HeaderHelpLabel label="Overall" help={HEADER_HELP.overall} /></th>
+                    <th className="py-2 pr-3"><HeaderHelpLabel label="Sci Fit" help={HEADER_HELP.sciFit} /></th>
+                    <th className="py-2 pr-3"><HeaderHelpLabel label="Stability" help={HEADER_HELP.stability} /></th>
+                    <th className="py-2 pr-3"><HeaderHelpLabel label="Confidence" help={HEADER_HELP.confidence} /></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -214,12 +264,44 @@ export default function ResultsPanel({ finalCandidate, portfolio = [], ineligibl
   )
 }
 
-function Metric({ label, value }) {
-  if (value === undefined || value === null || value === '') return null
+function HeaderHelpLabel({ label, help }) {
+  return (
+    <div className="group relative inline-flex items-center gap-1.5">
+      <span>{label}</span>
+      <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-white/25 text-[9px] text-white/65">
+        ?
+      </span>
+      <HelpTooltip help={help} />
+    </div>
+  )
+}
+
+function HelpTooltip({ help }) {
+  if (!help) return null
+  return (
+    <div className="pointer-events-none absolute left-0 top-full z-30 mt-2 hidden w-80 rounded-md border border-violet-300/30 bg-[#0c1020] p-2.5 text-[11px] normal-case text-white/85 shadow-[0_12px_28px_rgba(0,0,0,0.45)] group-hover:block group-focus-within:block">
+      <p><span className="font-semibold text-violet-200">Definition:</span> {help.definition}</p>
+      <p className="mt-1"><span className="font-semibold text-violet-200">Formula:</span> {help.formula}</p>
+    </div>
+  )
+}
+
+function Metric({ label, value, help = null, forceShow = false }) {
+  if (!forceShow && (value === undefined || value === null || value === '')) return null
 
   return (
     <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
-      <p className="text-xs text-white/40">{label}</p>
+      <div className="group relative inline-flex items-center gap-1.5">
+        <p className="text-xs text-white/40">{label}</p>
+        {help && (
+          <>
+            <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-white/25 text-[9px] text-white/65">
+              ?
+            </span>
+            <HelpTooltip help={help} />
+          </>
+        )}
+      </div>
       <p className="mt-1 font-mono text-sm text-white/85">{value}</p>
     </div>
   )

@@ -240,6 +240,83 @@ def _query_mp_http(
     return [item for item in data if isinstance(item, dict)]
 
 
+def fetch_formation_energy_by_mp_id(mp_id: str) -> float | None:
+    """Fetch formation_energy_per_atom for a specific MP material ID."""
+    material_id = str(mp_id or "").strip()
+    if not material_id:
+        return None
+
+    load_dotenv()
+    api_key = os.getenv("MP_API_KEY")
+    if not api_key:
+        return None
+
+    params = {
+        "material_ids": material_id,
+        "_fields": "formation_energy_per_atom",
+        "_limit": 1,
+    }
+    url = f"https://api.materialsproject.org/materials/summary/?{urlencode(params)}"
+    response = requests.get(
+        url,
+        headers={"X-API-KEY": api_key, "accept": "application/json"},
+        timeout=20,
+    )
+    response.raise_for_status()
+    payload = json.loads(response.text)
+    data = payload.get("data", [])
+    if not isinstance(data, list) or not data:
+        return None
+    value = _doc_get(data[0], "formation_energy_per_atom", None)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_summary_by_formula(formula: str) -> dict[str, Any] | None:
+    """Fetch best MP summary hit for a formula string."""
+    formula_text = str(formula or "").strip()
+    if not formula_text:
+        return None
+
+    load_dotenv()
+    api_key = os.getenv("MP_API_KEY")
+    if not api_key:
+        return None
+
+    params = {
+        "formula": formula_text,
+        "_fields": "material_id,formula_pretty,formation_energy_per_atom,energy_above_hull",
+        "_limit": 20,
+    }
+    url = f"https://api.materialsproject.org/materials/summary/?{urlencode(params)}"
+    response = requests.get(
+        url,
+        headers={"X-API-KEY": api_key, "accept": "application/json"},
+        timeout=20,
+    )
+    response.raise_for_status()
+    payload = json.loads(response.text)
+    data = payload.get("data", [])
+    if not isinstance(data, list) or not data:
+        return None
+
+    def hull(item: Any) -> float:
+        value = _doc_get(item, "energy_above_hull", None)
+        return _to_float(value, default=9999.0)
+
+    best = sorted(data, key=hull)[0]
+    return {
+        "mp_id": str(_doc_get(best, "material_id", "") or ""),
+        "formula": str(_doc_get(best, "formula_pretty", formula_text) or formula_text),
+        "formation_energy": _doc_get(best, "formation_energy_per_atom", None),
+        "stability_above_hull": _doc_get(best, "energy_above_hull", None),
+    }
+
+
 def _magnet_task(target_props: dict | None) -> bool:
     props = target_props or {}
     material_class = str(props.get("material_class", "")).lower()

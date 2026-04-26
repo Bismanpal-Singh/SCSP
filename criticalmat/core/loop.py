@@ -117,6 +117,54 @@ def _as_float(value: object, default: float = 0.0) -> float:
         return default
 
 
+def _normalize_formula_text(value: object) -> str:
+    """Normalize formula strings so subscript and plain digits match."""
+    if value is None:
+        return ""
+    subscript_digits = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
+    return str(value).translate(subscript_digits).strip().lower()
+
+
+def _hydrate_missing_formation_energy(candidate: dict) -> dict:
+    """Backfill formation energy from MP by mp_id when missing."""
+    if not isinstance(candidate, dict):
+        return candidate
+    if candidate.get("formation_energy") is not None:
+        return candidate
+
+    mp_id = str(candidate.get("mp_id", "") or "").strip()
+    formula = str(candidate.get("formula", "") or "").strip()
+
+    try:
+        from ..materials.search import fetch_formation_energy_by_mp_id, fetch_summary_by_formula
+
+        hydrated = dict(candidate)
+        if mp_id:
+            value = fetch_formation_energy_by_mp_id(mp_id)
+            if value is not None:
+                hydrated["formation_energy"] = float(value)
+                return hydrated
+
+        if formula:
+            summary = fetch_summary_by_formula(formula)
+            if isinstance(summary, dict):
+                fe = summary.get("formation_energy", None)
+                if fe is not None:
+                    hydrated["formation_energy"] = float(fe)
+                fetched_mp_id = str(summary.get("mp_id", "") or "").strip()
+                if fetched_mp_id and not hydrated.get("mp_id"):
+                    hydrated["mp_id"] = fetched_mp_id
+                hull = summary.get("stability_above_hull", None)
+                if hull is not None and hydrated.get("stability_above_hull") is None:
+                    hydrated["stability_above_hull"] = float(hull)
+                return hydrated
+    except Exception:
+        # Keep loop resilient if MP fallback lookup fails.
+        return candidate
+
+    return candidate
+
+
 def get_material_class(spec: dict) -> str:
     target_props = dict((spec or {}).get("target_props", {}) or {})
     return str(target_props.get("material_class", "unknown") or "unknown").strip().lower()
@@ -211,8 +259,15 @@ def choose_final_winner(memory_or_result: dict, portfolio: list[dict], source_ca
         if current_best:
             source_pool.append(current_best)
         formula = str(top.get("formula", top.get("candidate", "")) or "").strip()
+        normalized_formula = _normalize_formula_text(formula)
         for source in source_pool:
-            if str(source.get("formula", "") or "").strip() == formula:
+            source_formula = str(source.get("formula", "") or "").strip()
+            source_formula_plain = str(source.get("formula_plain", "") or "").strip()
+            if (
+                source_formula == formula
+                or _normalize_formula_text(source_formula) == normalized_formula
+                or _normalize_formula_text(source_formula_plain) == normalized_formula
+            ):
                 merged = dict(source)
                 merged.update({key: value for key, value in top.items() if value is not None})
                 top = merged
@@ -563,6 +618,7 @@ def run_agent(
         eligible_sorted = [candidate for candidate in scored_candidates if _is_candidate_eligible(candidate)]
         if eligible_sorted:
             best_candidate = dict(eligible_sorted[0])
+    best_candidate = _hydrate_missing_formation_energy(best_candidate)
 
     best_formula = str((best_candidate or {}).get("formula", "") or "").strip().lower()
     placeholder_candidate = best_formula in {"", "no candidate selected", "none", "n/a"}
