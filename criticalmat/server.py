@@ -199,6 +199,7 @@ def _run_agent_streaming(hypothesis: str, event_queue: queue.Queue) -> None:
                         "bestFormula": best.get("formula"),
                         "bestFormulaPlain": _formula_plain(best.get("formula")),
                         "score": top_score,
+                        "bestCandidate": _candidate_to_frontend(best),
                         "interpretation": interpretation,
                         "nextHypothesis": next_hypothesis,
                         "status": "converged" if converged else "continue",

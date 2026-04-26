@@ -30,6 +30,16 @@ def print_header(hypothesis: str) -> None:
     )
 
 
+def print_status_line(text: str) -> None:
+    """Render existing loop status lines in consistent UI styling."""
+    console.print(f"[bold white]{text}[/bold white]")
+
+
+def print_notice(text: str, style: str = "yellow") -> None:
+    """Render non-step notices (fast mode, convergence, fallbacks)."""
+    console.print(f"[bold {style}]{text}[/bold {style}]")
+
+
 def print_iteration(n: int, total: int, candidates_tested: int, best_score: int) -> None:
     console.print(f"\n[bold cyan]Iteration {n} / {total}[/bold cyan]")
     progress = Progress(

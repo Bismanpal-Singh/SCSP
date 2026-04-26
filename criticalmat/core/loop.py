@@ -12,7 +12,15 @@ import json
 
 from .memory import AgentMemory
 from . import mocks
-from ..demo import print_candidate, print_final_result, print_header, print_iteration, print_reasoning
+from ..demo import (
+    print_candidate,
+    print_final_result,
+    print_header,
+    print_iteration,
+    print_notice,
+    print_reasoning,
+    print_status_line,
+)
 
 
 def _has_converged(best_scores: list[int]) -> bool:
@@ -138,10 +146,8 @@ def run_agent(
 
     print_header(current_hypothesis)
     if fast_mode:
-        print("[FAST MODE] Using demo_cache.json candidates (no live MP API call).")
+        print_notice("[FAST MODE] Using demo_cache.json candidates (no live MP API call).", style="yellow")
     for iteration in range(1, max_iterations + 1):
-        print_iteration(iteration, max_iterations, 0, int(memory.current_best.get("score", 0) or 0))
-
         p2_parse_fn = mocks.parse_hypothesis
         p2_interpret_fn = mocks.interpret_results
         p2_next_fn = mocks.generate_next_hypothesis
@@ -157,17 +163,17 @@ def run_agent(
                 if callable(synth_fn):
                     p2_synthesis_fn = synth_fn
                 elif iteration == 1:
-                    print("1) P2 next-hypothesis missing; using mock fallback.")
+                    print_notice("1) P2 next-hypothesis missing; using mock fallback.", style="yellow")
             except Exception as exc:
                 if not allow_mock_fallback:
                     raise RuntimeError(f"Real P2 import failed: {exc}") from exc
                 if iteration == 1:
-                    print(f"1) Real P2 import failed ({exc}); using mock reasoning.")
+                    print_notice(f"1) Real P2 import failed ({exc}); using mock reasoning.", style="yellow")
 
         spec = p2_parse_fn(current_hypothesis)
         retrieval_spec = _query_safe_spec(spec)
         memory.add_composition(current_hypothesis)
-        print("1) Parsed hypothesis into structured spec.")
+        print_status_line("1) Parsed hypothesis into structured spec.")
 
         p1_score_fn = mocks.score_candidate
         try:
@@ -191,7 +197,7 @@ def run_agent(
         except Exception as exc:
             if not allow_mock_fallback:
                 raise RuntimeError(f"Real P1 retrieval failed: {exc}") from exc
-            print(f"2) Real P1 retrieval failed ({exc}); falling back to mocks.")
+            print_notice(f"2) Real P1 retrieval failed ({exc}); falling back to mocks.", style="yellow")
             candidates = mocks.get_candidates(
                 spec.get("allowed_elements", []),
                 spec.get("banned_elements", []),
@@ -231,7 +237,7 @@ def run_agent(
 
         top_score = selected_top.get("score", 0) if selected_top else 0
         best_scores.append(top_score)
-        print(f"3) Scored candidates. Best eligible score this round: {top_score}")
+        print_status_line(f"3) Scored candidates. Best eligible score this round: {top_score}")
         if selected_top:
             print_candidate(
                 formula=str(selected_top.get("formula", "unknown")),
@@ -245,14 +251,14 @@ def run_agent(
         print_reasoning(interpretation, iteration)
 
         if iteration >= min_iterations_before_stop and top_score > convergence_score_threshold:
-            print(f"Converged: best score exceeded {convergence_score_threshold}.")
+            print_notice(f"Converged: best score exceeded {convergence_score_threshold}.", style="green")
             break
         if iteration >= min_iterations_before_stop and _has_converged(best_scores):
-            print("Converged: score did not improve for two iterations.")
+            print_notice("Converged: score did not improve for two iterations.", style="green")
             break
 
         current_hypothesis = p2_next_fn(memory.to_dict())
-        print(f"5) Next hypothesis: {current_hypothesis}")
+        print_status_line(f"5) Next hypothesis: {current_hypothesis}")
 
     final_memory = memory.to_dict()
     best_candidate = final_memory.get("current_best", {})
