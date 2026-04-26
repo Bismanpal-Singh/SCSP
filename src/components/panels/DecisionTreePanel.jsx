@@ -305,10 +305,21 @@ export default function DecisionTreePanel({
         </span>
       </div>
 
-      <div className="w-full overflow-auto px-4 py-5">
+      <div
+        style={{
+          width: '100%',
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          scrollbarWidth: 'thin',
+        }}
+        className="px-4 py-5"
+      >
         <svg
           viewBox={`0 0 ${VIEWBOX.width} ${VIEWBOX.height}`}
-          className="mx-auto h-auto w-full min-w-[1100px]"
+          width="100%"
+          height="auto"
+          preserveAspectRatio="xMidYMid meet"
+          style={{ display: 'block', maxWidth: '100%', minWidth: 1100 }}
           role="img"
           aria-label="Agent decision tree"
         >

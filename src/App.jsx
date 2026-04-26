@@ -57,10 +57,20 @@ export default function App() {
       >
         <BackgroundEffect />
         <Navbar />
-        {view === 'home' && <HomePage useMock={USE_MOCK} />}
-        {view === 'features' && <FeaturesPage />}
-        {view === 'about' && <AboutPage />}
-        {view === 'contact' && <ContactPage />}
+        <main
+          style={{
+            width: '100%',
+            maxWidth: 1600,
+            margin: '0 auto',
+            padding: '0 32px',
+            boxSizing: 'border-box',
+          }}
+        >
+          {view === 'home' && <HomePage useMock={USE_MOCK} />}
+          {view === 'features' && <FeaturesPage />}
+          {view === 'about' && <AboutPage />}
+          {view === 'contact' && <ContactPage />}
+        </main>
       </div>
       {showIntro && (
         <IntroLoader onPhaseChange={setIntroPhase} onComplete={handleIntroComplete} />
