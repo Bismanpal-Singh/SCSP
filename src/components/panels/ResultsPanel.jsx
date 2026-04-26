@@ -3,14 +3,14 @@ import React from 'react'
 export default function ResultsPanel({ finalCandidate }) {
   if (!finalCandidate) {
     return (
-      <div className="rounded-xl border border-white/10 bg-black/20 p-5 text-left text-sm text-white/55">
+      <div className="w-full rounded-xl border border-white/10 bg-black/20 p-5 text-left text-sm text-white/55">
         Final candidate will appear when the agent completes.
       </div>
     )
   }
 
   return (
-    <div className="space-y-5 text-left">
+    <div className="w-full space-y-5 text-left">
       <div className="rounded-xl border border-violet-500/20 bg-black/25 p-5">
         <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-violet-300/80">
           Top candidate

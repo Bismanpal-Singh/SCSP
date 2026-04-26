@@ -21,51 +21,43 @@ export function humanize(text = '') {
   return softened.length > 120 ? `${softened.slice(0, 117).trim()}…` : softened
 }
 
-function compactSentences(text = '') {
-  return String(text)
+function firstSentence(text = '') {
+  return humanize(
+    String(text)
     .split(/(?<=[.!?])\s+/)
-    .map(humanize)
-    .filter(Boolean)
-    .slice(0, 2)
+      .find(Boolean) || '',
+  )
 }
 
-export function narrateIteration(iter, isFirst) {
-  const lines = []
+function outcomeDetail(iter) {
+  const detail = firstSentence(iter.interpretation)
+  if (detail) return detail
+  return describeScore(iter.score)
+}
 
+function openingLine(iter, isFirst, previousIteration) {
   if (isFirst) {
-    lines.push('Looking through 150,000 materials in the database…')
-    lines.push("Filtering for what the hypothesis asks for…")
-  } else {
-    lines.push(`Now testing ${iter.candidatesTested} candidates from the new direction…`)
+    return "Searching for permanent magnets that don't need rare earth elements…"
   }
 
-  lines.push(`Found ${iter.candidatesTested} candidates worth checking — running them through the spec.`)
-  lines.push(...compactSentences(iter.interpretation))
-  lines.push(`Best so far is ${iter.bestFormula} at score ${iter.score} — ${describeScore(iter.score)}.`)
-
-  if (iter.nextHypothesis) {
-    lines.push(`Pivoting: ${humanize(iter.nextHypothesis)}`)
+  const pivot = previousIteration?.nextHypothesis || iter.nextHypothesis
+  if (pivot) {
+    return `${humanize(pivot)}…`
   }
 
-  return lines
+  return `Trying a new direction around ${iter.bestFormula || 'the best option so far'}…`
+}
+
+export function narrateIteration(iter, isFirst, previousIteration = null) {
+  return [
+    openingLine(iter, isFirst, previousIteration),
+    `Best option so far is ${iter.bestFormula} at score ${iter.score} — ${outcomeDetail(iter)}.`,
+  ]
 }
 
 export function narrateFinal(finalCandidate = {}) {
-  const lines = []
   const formula = finalCandidate.formula || 'The final option'
-
-  if (finalCandidate.thermalStability || finalCandidate.magneticMoment || finalCandidate.chinaDependency) {
-    lines.push(
-      `${formula} holds up to ${finalCandidate.thermalStability || 'the target range'}. Magnetic moment is ${finalCandidate.magneticMoment || 'on spec'}. ${finalCandidate.chinaDependency || 'Low'} China dependency.`,
-    )
-  } else {
-    lines.push(`${formula} is the strongest match the agent found.`)
-  }
-
-  lines.push(`Score ${finalCandidate.score ?? 'n/a'}. That's above the convergence threshold.`)
-  lines.push('Done. Let me put together the full report…')
-
-  return lines
+  return [`Found it: ${formula} at score ${finalCandidate.score ?? 'n/a'}. Putting the report together now…`]
 }
 
 export function narrationTone(text = '') {

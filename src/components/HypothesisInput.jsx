@@ -9,8 +9,8 @@ export default function HypothesisInput({ value, onChange, onRun, disabled }) {
   }
 
   return (
-    <div>
-      <div style={{ display: 'flex', gap: 12, alignItems: 'stretch', flexWrap: 'wrap' }}>
+    <div style={{ width: '100%' }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'stretch', flexWrap: 'wrap', width: '100%' }}>
         <textarea
           value={value}
           onChange={e => onChange(e.target.value)}
@@ -19,7 +19,8 @@ export default function HypothesisInput({ value, onChange, onRun, disabled }) {
           placeholder="type here"
           rows={2}
           style={{
-            flex: '1 1 280px',
+            flex: '1 1 100%',
+            width: '100%',
             minWidth: 0,
             background: disabled ? 'rgba(10,10,12,0.5)' : 'var(--surface)',
             border: '1px solid',

@@ -49,7 +49,7 @@ export default function App() {
   return (
     <div className="relative min-h-screen bg-mantle-bg text-white">
       <div
-        className="min-h-screen transition-[opacity,filter,transform] duration-700 ease-out"
+        className="min-h-screen w-full transition-[opacity,filter,transform] duration-700 ease-out"
         style={{
           opacity: revealApp ? 1 : 0,
           filter: revealApp ? 'blur(0px)' : 'blur(8px)',

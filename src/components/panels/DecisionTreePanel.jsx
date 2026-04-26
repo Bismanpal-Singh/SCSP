@@ -1,253 +1,255 @@
 import React, { useMemo, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import DecisionTreeTooltip from './DecisionTreeTooltip'
 
-const ROOT_ID = 'root'
-const NODE_WIDTH = 118
-const NODE_HEIGHT = 70
-const LEVEL_GAP = 150
+const VIEWBOX = { width: 1700, height: 850 }
+const ROOT = { id: 'root', x: 850, y: 20, width: 480, height: 56 }
+const LEVEL_POSITIONS = [
+  { y: 180, xs: [300, 575, 850, 1125, 1400] },
+  { y: 420, xs: [500, 733, 967, 1200] },
+  { y: 660, xs: [620, 850, 1080] },
+]
 
-function slug(value, fallback) {
-  return String(value || fallback)
+function toId(value, index) {
+  return String(value || `node-${index}`)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
 }
 
-function oneLine(text = '') {
-  return String(text).split(/(?<=[.!?])\s+/)[0] || 'Agent evaluated this branch against the target constraints.'
-}
+function buildLevelsFromDecisionLog({ decisionLog, finalCandidate, iterations }) {
+  if (!decisionLog.length) return []
 
-function synthesizeCandidates(iteration) {
-  const baseScore = Number(iteration.score || 0)
-  const formulas = [
-    iteration.bestFormulaPlain || iteration.bestFormula || `candidate-${iteration.num}-a`,
-    `branch-${iteration.num}-b`,
-    `branch-${iteration.num}-c`,
-  ]
-  const reasons = String(iteration.interpretation || 'Candidate did not satisfy the full spec.')
-    .split(/(?<=[.!?])\s+/)
-    .filter(Boolean)
+  const groups = decisionLog.reduce((map, entry, index) => {
+    const iteration = Number(entry.iteration || 1)
+    if (!map.has(iteration)) map.set(iteration, [])
+    map.get(iteration).push({ ...entry, id: toId(`${iteration}-${entry.formula}-${index}`, index) })
+    return map
+  }, new Map())
 
-  return formulas.map((formula, index) => ({
-    id: slug(`${iteration.num}-${formula}`, `iter-${iteration.num}-${index}`),
-    formula: index === 0 ? iteration.bestFormula || formula : formula,
-    score: Math.max(0, baseScore - index * 12),
-    status: index === 0 && iteration.status === 'converged' ? 'winner' : index === 0 ? 'explored' : 'rejected',
-    isBest: index === 0,
-    reason: index === 0 ? iteration.interpretation : reasons[index - 1] || 'Rejected after constraint screening.',
-  }))
-}
-
-function normalizeLevels({ decisionLog, finalCandidate, iterations }) {
-  if (decisionLog.length > 0) {
-    const grouped = decisionLog.reduce((groups, entry, index) => {
-      const iteration = Number(entry.iteration || 1)
-      if (!groups.has(iteration)) groups.set(iteration, [])
-      groups.get(iteration).push({ ...entry, index })
-      return groups
-    }, new Map())
-
-    return Array.from(grouped.entries())
-      .sort(([a], [b]) => a - b)
-      .map(([iteration, entries], levelIndex) => {
-        const selected = entries.find((entry) => entry.decision === 'selected')
-        const best = selected || entries.reduce((top, entry) => (
-          Number(entry.score || 0) > Number(top.score || 0) ? entry : top
-        ), entries[0])
-
-        return {
-          iteration,
-          candidatesTested: iterations[levelIndex]?.candidatesTested || entries.length,
-          bestScore: best?.score,
-          candidates: entries.slice(0, 10).map((entry) => {
-            const isWinner = entry.decision === 'selected' || entry.formula === finalCandidate?.formula
-            const isBest = entry.formula === best?.formula
-            return {
-              ...entry,
-              id: slug(`${iteration}-${entry.formula}-${entry.index}`, `iter-${iteration}-${entry.index}`),
-              status: isWinner ? 'winner' : isBest ? 'explored' : 'rejected',
-              isBest,
-              reason: entry.reason || 'Scored by the agent during this iteration.',
-            }
-          }),
-        }
-      })
-  }
-
-  return iterations.map((iteration) => ({
-    iteration: Number(iteration.num || 1),
-    candidatesTested: iteration.candidatesTested,
-    bestScore: iteration.score,
-    candidates: synthesizeCandidates(iteration),
-  }))
-}
-
-function normalizeMockTree(decisionTree) {
-  if (!decisionTree?.levels) return null
-  return decisionTree.levels.map((level) => ({
-    iteration: level.iteration,
-    candidatesTested: level.candidatesTested,
-    bestScore: level.bestScore,
-    candidates: level.candidates.map((candidate) => ({
-      ...candidate,
-      isBest: Boolean(candidate.isBest || candidate.status === 'winner'),
-    })),
-  }))
-}
-
-function buildTree({ decisionLog, decisionTree, finalCandidate, iterations, query }) {
-  const levels = normalizeMockTree(decisionTree) || normalizeLevels({ decisionLog, finalCandidate, iterations })
-  const widestLevel = Math.max(3, ...levels.map((level) => level.candidates.length))
-  const viewWidth = Math.max(900, widestLevel * 145)
-  const viewHeight = 130 + Math.max(1, levels.length) * LEVEL_GAP + 120
-  const rootX = viewWidth / 2
-
-  const root = {
-    id: ROOT_ID,
-    label: decisionTree?.root?.label || 'Hypothesis',
-    description: query || decisionTree?.root?.description || 'Submitted research objective',
-    x: rootX,
-    y: 54,
-    status: 'root',
-  }
-
-  const nodes = [root]
-  const edges = []
-  const pathIds = [ROOT_ID]
-  let previousBestId = ROOT_ID
-
-  levels.forEach((level, levelIndex) => {
-    const y = 145 + levelIndex * LEVEL_GAP
-    const count = level.candidates.length
-    const spacing = Math.min(150, (viewWidth - 180) / Math.max(1, count - 1))
-    const startX = rootX - ((count - 1) * spacing) / 2
-
-    const bestCandidate =
-      level.candidates.find((candidate) => candidate.status === 'winner') ||
-      level.candidates.find((candidate) => candidate.isBest) ||
-      level.candidates.reduce((top, candidate) => (
+  return Array.from(groups.entries())
+    .sort(([a], [b]) => a - b)
+    .slice(0, 3)
+    .map(([iteration, candidates], levelIndex) => {
+      const winner = candidates.find((candidate) => candidate.decision === 'selected' || candidate.formula === finalCandidate?.formula)
+      const best = winner || candidates.reduce((top, candidate) => (
         Number(candidate.score || 0) > Number(top.score || 0) ? candidate : top
-      ), level.candidates[0])
+      ), candidates[0])
 
-    level.candidates.forEach((candidate, index) => {
-      const node = {
-        ...candidate,
-        iteration: level.iteration,
-        x: startX + index * spacing,
-        y,
-        why: oneLine(iterations[levelIndex]?.interpretation || candidate.reason),
+      return {
+        iteration,
+        candidatesTested: iterations[levelIndex]?.candidatesTested || candidates.length,
+        candidates: candidates.slice(0, LEVEL_POSITIONS[levelIndex]?.xs.length || 5).map((candidate) => ({
+          ...candidate,
+          status: candidate.formula === finalCandidate?.formula ? 'winner' : candidate.formula === best?.formula ? 'explored' : 'rejected',
+          isBest: candidate.formula === best?.formula,
+        })),
       }
-      nodes.push(node)
-      edges.push({
-        from: previousBestId,
-        to: node.id,
-        type: node.id === bestCandidate?.id || node.status === 'winner' ? 'path' : 'sibling',
-      })
+    })
+}
+
+function normalizeTree({ decisionLog, decisionTree, finalCandidate, iterations, query }) {
+  const sourceLevels = decisionTree?.levels?.length
+    ? decisionTree.levels
+    : buildLevelsFromDecisionLog({ decisionLog, finalCandidate, iterations })
+
+  const levels = sourceLevels.slice(0, 3).map((level, levelIndex) => {
+    const positions = LEVEL_POSITIONS[levelIndex]
+    const candidates = level.candidates.map((candidate, index) => {
+      const isWinner = candidate.status === 'winner' || candidate.id === decisionTree?.finalWinner
+      const isBest = Boolean(candidate.isBest || isWinner)
+      return {
+        ...candidate,
+        id: candidate.id || toId(`${level.iteration}-${candidate.formula}`, index),
+        iteration: level.iteration,
+        x: positions.xs[index] ?? positions.xs[positions.xs.length - 1],
+        y: positions.y,
+        status: isWinner ? 'winner' : isBest ? 'explored' : 'rejected',
+        isBest,
+      }
     })
 
-    if (bestCandidate) {
-      previousBestId = bestCandidate.id
-      pathIds.push(bestCandidate.id)
+    return {
+      ...level,
+      candidates,
+      best: candidates.find((candidate) => candidate.isBest),
     }
   })
 
-  const stats = {
-    tested: levels.reduce((total, level) => total + Number(level.candidatesTested || level.candidates.length), 0),
-    rejected: nodes.filter((node) => node.status === 'rejected').length,
-    selected: nodes.filter((node) => node.status === 'winner').length || (finalCandidate ? 1 : 0),
-    iterations: levels.length,
-    score: finalCandidate?.score || levels[levels.length - 1]?.bestScore || 0,
-  }
+  const nodes = [
+    {
+      id: ROOT.id,
+      x: ROOT.x,
+      y: ROOT.y + ROOT.height / 2,
+      label: decisionTree?.root?.label || 'Hypothesis',
+      description: query || decisionTree?.root?.description || 'Submitted hypothesis',
+      status: 'root',
+    },
+    ...levels.flatMap((level) => level.candidates),
+  ]
 
-  return { edges, nodes, pathIds, root, stats, viewHeight, viewWidth }
+  const edges = []
+  let parent = nodes[0]
+  levels.forEach((level) => {
+    level.candidates.forEach((candidate) => {
+      edges.push({
+        from: parent,
+        to: candidate,
+        isPath: candidate.isBest,
+      })
+    })
+    if (level.best) parent = level.best
+  })
+
+  const winner = nodes.find((node) => node.status === 'winner')
+  const finalScore = winner?.score || finalCandidate?.score || levels.at(-1)?.bestScore || 0
+  const candidatesEvaluated = levels.reduce(
+    (total, level) => total + Number(level.candidatesTested || level.candidates.length),
+    0,
+  )
+
+  return {
+    candidatesEvaluated,
+    edges,
+    finalScore,
+    levels,
+    nodes,
+    winner,
+  }
 }
 
-function nodeStyles(node, isDimmed, isActive) {
+function nodeRadius(node) {
+  if (node.status === 'winner') return 44
+  if (node.isBest) return 36
+  return 32
+}
+
+function connectionStart(node) {
   if (node.status === 'root') {
-    return {
-      fill: '#071827',
-      stroke: '#22d3ee',
-      opacity: isDimmed ? 0.35 : 1,
-      filter: 'url(#cyanGlow)',
-    }
+    return { x: ROOT.x, y: ROOT.y + ROOT.height + 12 }
   }
+  return { x: node.x, y: node.y + nodeRadius(node) + 24 }
+}
+
+function connectionEnd(node) {
+  return { x: node.x, y: node.y - nodeRadius(node) - 24 }
+}
+
+function edgePoints(from, to) {
+  const start = connectionStart(from)
+  const end = connectionEnd(to)
+  const midY = (start.y + end.y) / 2
+  return `${start.x},${start.y} ${start.x},${midY} ${end.x},${midY} ${end.x},${end.y}`
+}
+
+function nodeStyle(node) {
   if (node.status === 'winner') {
     return {
-      fill: '#062414',
-      stroke: '#34d399',
-      opacity: isDimmed ? 0.45 : 1,
-      filter: 'url(#greenGlow)',
+      stroke: '#00f5d4',
+      dot: '#00f5d4',
+      label: '#ffffff',
+      score: '#00f5d4',
+      radius: 44,
+      dotRadius: 12,
+      opacity: 1,
+      strokeWidth: 3,
+      filter: 'url(#winnerGlow)',
     }
   }
-  if (node.isBest || node.status === 'explored') {
+  if (node.isBest) {
     return {
-      fill: '#171206',
-      stroke: isActive ? '#fde68a' : '#f59e0b',
-      opacity: isDimmed ? 0.45 : 1,
-      filter: 'url(#amberGlow)',
+      stroke: '#a78bfa',
+      dot: '#a78bfa',
+      label: '#ffffff',
+      score: '#a78bfa',
+      radius: 36,
+      dotRadius: 8,
+      opacity: 1,
+      strokeWidth: 2,
+      filter: 'drop-shadow(0 0 8px rgba(167,139,250,0.5))',
     }
   }
   return {
-    fill: '#090f1a',
-    stroke: '#fb7185',
-    opacity: isDimmed ? 0.25 : 0.55,
+    stroke: '#5b6bb8',
+    dot: '#5b6bb8',
+    label: '#7280a8',
+    score: '#7d5570',
+    radius: 32,
+    dotRadius: 4,
+    opacity: 0.7,
+    strokeWidth: 2,
     filter: 'none',
   }
 }
 
-function formatPropName(value) {
-  return String(value)
-    .replace(/([A-Z])/g, ' $1')
-    .replace(/^./, (letter) => letter.toUpperCase())
+function Crown({ x, y, color, scale = 1 }) {
+  return (
+    <path
+      d={`M ${x - 11 * scale} ${y + 5 * scale} L ${x - 7 * scale} ${y - 7 * scale} L ${x} ${y + 1 * scale} L ${x + 7 * scale} ${y - 7 * scale} L ${x + 11 * scale} ${y + 5 * scale} Z`}
+      fill="none"
+      stroke={color}
+      strokeWidth={1.6 * scale}
+      strokeLinejoin="miter"
+    />
+  )
 }
 
-function DetailPanel({ node, onClose }) {
-  if (!node || node.status === 'root') return null
-
-  const hiddenKeys = new Set(['x', 'y', 'id', 'index', 'isBest', 'why', 'reason', 'status', 'decision'])
-  const properties = Object.entries(node).filter(([key, value]) => (
-    !hiddenKeys.has(key) && value !== null && value !== undefined && value !== ''
-  ))
+function StructureNode({ node, index, onHoverStart, onHoverMove, onHoverEnd }) {
+  const style = nodeStyle(node)
+  const crownY = node.y - style.radius - 20
+  const labelY = node.y + style.radius + 18
+  const scoreY = labelY + 14
 
   return (
-    <aside className="absolute right-0 top-0 z-20 h-full w-full max-w-sm border-l border-cyan-300/15 bg-[#06111f]/95 p-5 text-left shadow-[-20px_0_45px_rgba(0,0,0,0.35)] backdrop-blur-xl animate-fade-in">
-      <button
-        type="button"
-        onClick={onClose}
-        className="float-right font-mono text-xs uppercase tracking-[0.16em] text-white/45 transition hover:text-white"
+    <motion.g
+      initial={{ opacity: 0, scale: 0.6 }}
+      animate={{ opacity: style.opacity, scale: 1 }}
+      transition={{ delay: 0.35 + index * 0.06, duration: 0.32, ease: 'easeOut' }}
+      style={{ transformOrigin: `${node.x}px ${node.y}px` }}
+      onMouseEnter={(event) => onHoverStart(node, event)}
+      onMouseMove={(event) => onHoverMove(node, event)}
+      onMouseLeave={onHoverEnd}
+    >
+      {(node.isBest || node.status === 'winner') && (
+        <Crown
+          x={node.x}
+          y={crownY}
+          color={node.status === 'winner' ? '#00f5d4' : '#a78bfa'}
+          scale={node.status === 'winner' ? 1.15 : 1}
+        />
+      )}
+      <circle
+        cx={node.x}
+        cy={node.y}
+        r={style.radius}
+        fill="transparent"
+        stroke={style.stroke}
+        strokeWidth={node.status === 'rejected' ? 1.5 : style.strokeWidth}
+        filter={style.filter}
+        className={node.status === 'winner' ? 'decision-tree-winner' : ''}
+      />
+      <circle cx={node.x} cy={node.y} r={style.dotRadius} fill={style.dot} />
+      <text
+        x={node.x}
+        y={labelY}
+        textAnchor="middle"
+        fill={style.label}
+        className="font-mono text-[13px]"
+        style={{ textShadow: '0 0 12px rgba(0,0,0,0.9)' }}
       >
-        Close
-      </button>
-      <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-cyan-200/70">
-        Node detail
-      </p>
-      <div className="mt-5 rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.06] p-4">
-        <p className="text-3xl font-bold text-white">{node.formula}</p>
-        <p className="mt-2 font-mono text-sm text-cyan-100/75">Score {node.score ?? 'n/a'}</p>
-      </div>
-
-      <div className="mt-5 grid gap-2">
-        {properties.map(([key, value]) => (
-          <div key={key} className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-            <p className="text-[11px] text-white/38">{formatPropName(key)}</p>
-            <p className="mt-1 font-mono text-xs text-white/78">{String(value)}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-5 rounded-xl border border-white/10 bg-black/20 p-4">
-        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/42">
-          Reason
-        </p>
-        <p className="mt-2 text-sm leading-6 text-white/75">{node.reason}</p>
-      </div>
-
-      <div className="mt-3 rounded-xl border border-amber-300/15 bg-amber-300/[0.05] p-4">
-        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-amber-200/60">
-          Why this matters
-        </p>
-        <p className="mt-2 text-sm leading-6 text-white/72">{node.why}</p>
-      </div>
-    </aside>
+        {node.formula}
+      </text>
+      <text
+        x={node.x}
+        y={scoreY}
+        textAnchor="middle"
+        fill={style.score}
+        className="font-mono text-[11px]"
+        style={{ textShadow: '0 0 12px rgba(0,0,0,0.9)' }}
+      >
+        score · {node.score}
+      </text>
+    </motion.g>
   )
 }
 
@@ -258,26 +260,31 @@ export default function DecisionTreePanel({
   iterations = [],
   query = '',
 }) {
-  const [selectedNode, setSelectedNode] = useState(null)
-  const [hovered, setHovered] = useState(null)
-  const [tooltip, setTooltip] = useState(null)
+  const [tooltipNode, setTooltipNode] = useState(null)
+  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 })
+  const [tooltipLocked, setTooltipLocked] = useState(false)
 
   const tree = useMemo(
-    () => buildTree({ decisionLog, decisionTree, finalCandidate, iterations, query }),
+    () => normalizeTree({ decisionLog, decisionTree, finalCandidate, iterations, query }),
     [decisionLog, decisionTree, finalCandidate, iterations, query],
   )
 
-  const hoveredChain = useMemo(() => {
-    if (!hovered) return new Set()
-    const parents = new Map(tree.edges.map((edge) => [edge.to, edge.from]))
-    const chain = new Set([hovered])
-    let cursor = hovered
-    while (parents.has(cursor)) {
-      cursor = parents.get(cursor)
-      chain.add(cursor)
-    }
-    return chain
-  }, [hovered, tree.edges])
+  function showTooltip(node, event) {
+    if (node.status === 'root') return
+    setTooltipNode(node)
+    setTooltipPosition({ x: event.clientX, y: event.clientY })
+  }
+
+  function moveTooltip(node, event) {
+    if (node.status === 'root') return
+    setTooltipPosition({ x: event.clientX, y: event.clientY })
+  }
+
+  function hideTooltip() {
+    window.setTimeout(() => {
+      if (!tooltipLocked) setTooltipNode(null)
+    }, 80)
+  }
 
   if (tree.nodes.length <= 1) {
     return (
@@ -288,186 +295,141 @@ export default function DecisionTreePanel({
   }
 
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-[#050a13] text-left shadow-[0_0_44px_rgba(34,211,238,0.08)]">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-white/[0.035] px-4 py-3">
+    <div className="relative w-full overflow-hidden rounded-2xl border border-white/10 bg-[#050a13] text-left shadow-[0_0_44px_rgba(34,211,238,0.08)]">
+      <div className="flex w-full flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-white/[0.035] px-4 py-3">
         <p className="font-mono text-xs text-white/65">
-          {tree.stats.tested} candidates tested  ·  {tree.stats.rejected} rejected  ·  {tree.stats.selected} selected  ·  {tree.stats.iterations} iterations  ·  converged at {tree.stats.score}
+          {tree.candidatesEvaluated} candidates evaluated  ·  {tree.levels.length} iterations  ·  1 winner  ·  converged at {tree.finalScore}
         </p>
         <span className="rounded-full border border-emerald-300/20 bg-emerald-300/[0.06] px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-emerald-100/70">
           Decision Tree
         </span>
       </div>
 
-      <div className="relative h-[560px] overflow-auto">
+      <div className="w-full overflow-auto px-4 py-5">
         <svg
-          className="min-h-full min-w-full"
-          viewBox={`0 0 ${tree.viewWidth} ${tree.viewHeight}`}
+          viewBox={`0 0 ${VIEWBOX.width} ${VIEWBOX.height}`}
+          className="mx-auto h-auto w-full min-w-[1100px]"
           role="img"
           aria-label="Agent decision tree"
         >
           <defs>
-            <filter id="cyanGlow" x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="4" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-            <filter id="amberGlow" x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="3" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-            <filter id="greenGlow" x="-60%" y="-60%" width="220%" height="220%">
-              <feGaussianBlur stdDeviation="5" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
+            <pattern id="decision-dot-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+              <circle cx="2" cy="2" r="1.5" fill="rgba(255,255,255,0.025)" />
+            </pattern>
+            <filter id="winnerGlow" x="-100%" y="-100%" width="300%" height="300%">
+              <feDropShadow dx="0" dy="0" stdDeviation="7" floodColor="#00f5d4" floodOpacity="0.9" />
             </filter>
           </defs>
+          <rect width={VIEWBOX.width} height={VIEWBOX.height} fill="url(#decision-dot-grid)" />
 
-          {tree.edges.map((edge, index) => {
-            const from = tree.nodes.find((node) => node.id === edge.from)
-            const to = tree.nodes.find((node) => node.id === edge.to)
-            if (!from || !to) return null
-            const active = hoveredChain.has(edge.from) && hoveredChain.has(edge.to)
-            const path = `M ${from.x} ${from.y + 34} C ${from.x} ${(from.y + to.y) / 2}, ${to.x} ${(from.y + to.y) / 2}, ${to.x} ${to.y - 34}`
-            const isMainPath = edge.type === 'path'
-            return (
-              <path
-                key={`${edge.from}-${edge.to}`}
-                d={path}
-                fill="none"
-                stroke={active || isMainPath ? '#f59e0b' : '#94a3b8'}
-                strokeDasharray={isMainPath ? '0' : '6 8'}
-                strokeLinecap="round"
-                strokeWidth={active ? 3.5 : isMainPath ? 2.5 : 1.2}
-                opacity={active ? 1 : isMainPath ? 0.72 : 0.28}
-                style={{
-                  animation: `tree-draw 1.1s ease ${index * 80}ms both`,
-                }}
+          {tree.levels.map((level) => (
+            <g key={`iteration-label-${level.iteration}`}>
+              <line
+                x1="40"
+                y1={LEVEL_POSITIONS[level.iteration - 1]?.y}
+                x2={VIEWBOX.width - 40}
+                y2={LEVEL_POSITIONS[level.iteration - 1]?.y}
+                stroke="rgba(255,255,255,0.04)"
+                strokeDasharray="8 12"
               />
-            )
-          })}
-
-          {tree.nodes.map((node, index) => {
-            const isHovered = hovered === node.id
-            const isDimmed = Boolean(hovered) && !hoveredChain.has(node.id) && !isHovered
-            const styles = nodeStyles(node, isDimmed, isHovered)
-            const isCircle = node.status === 'root'
-            const title = node.status === 'root' ? node.label : node.formula
-            const tag = node.status === 'winner' ? '✓ WINNER' : node.isBest ? '★ best' : node.status
-
-            return (
-              <g
-                key={node.id}
-                className="cursor-pointer"
-                style={{
-                  transformOrigin: `${node.x}px ${node.y}px`,
-                  animation: `node-pop 480ms ease ${index * 90}ms both`,
-                }}
-                onClick={() => setSelectedNode(node)}
-                onMouseEnter={(event) => {
-                  setHovered(node.id)
-                  setTooltip({
-                    x: event.clientX,
-                    y: event.clientY,
-                    node,
-                  })
-                }}
-                onMouseMove={(event) => {
-                  setTooltip((current) => current && { ...current, x: event.clientX, y: event.clientY })
-                }}
-                onMouseLeave={() => {
-                  setHovered(null)
-                  setTooltip(null)
-                }}
+              <text
+                x="40"
+                y={LEVEL_POSITIONS[level.iteration - 1]?.y - 12}
+                className="fill-cyan-200 font-mono text-[13px]"
               >
-                {isCircle ? (
-                  <>
-                    <circle cx={node.x} cy={node.y} r="34" {...styles} strokeWidth="2.4" />
-                    <text x={node.x} y={node.y - 2} textAnchor="middle" className="fill-cyan-100 text-[12px] font-bold">
-                      {title}
-                    </text>
-                    <text x={node.x} y={node.y + 48} textAnchor="middle" className="fill-slate-400 text-[10px]">
-                      {node.description.slice(0, 42)}
-                    </text>
-                  </>
-                ) : (
-                  <>
-                    {node.status === 'winner' && (
-                      <ellipse
-                        cx={node.x}
-                        cy={node.y}
-                        rx={NODE_WIDTH / 2 + 12}
-                        ry={NODE_HEIGHT / 2 + 10}
-                        fill="none"
-                        stroke="#fbbf24"
-                        strokeWidth="2"
-                        opacity="0.75"
-                        className="animate-pulse"
-                      />
-                    )}
-                    <rect
-                      x={node.x - NODE_WIDTH / 2}
-                      y={node.y - NODE_HEIGHT / 2}
-                      width={NODE_WIDTH}
-                      height={NODE_HEIGHT}
-                      rx="16"
-                      {...styles}
-                      strokeWidth={node.status === 'winner' ? 2.8 : node.isBest ? 2.4 : 1.4}
-                    />
-                    <text x={node.x} y={node.y - 10} textAnchor="middle" className="fill-white text-[14px] font-bold">
-                      {title}
-                    </text>
-                    <text x={node.x} y={node.y + 10} textAnchor="middle" className="fill-slate-300 text-[11px]">
-                      Score {node.score ?? 'n/a'}
-                    </text>
-                    <text
-                      x={node.x}
-                      y={node.y + 28}
-                      textAnchor="middle"
-                      className={node.status === 'winner' ? 'fill-emerald-200 text-[9px]' : node.isBest ? 'fill-amber-200 text-[9px]' : 'fill-rose-200 text-[9px]'}
-                    >
-                      {tag}
-                    </text>
-                  </>
-                )}
-              </g>
-            )
-          })}
+                {`// ITERATION ${String(level.iteration).padStart(2, '0')}`}
+              </text>
+              <text
+                x="40"
+                y={LEVEL_POSITIONS[level.iteration - 1]?.y + 8}
+                className="fill-slate-500 font-mono text-[10px]"
+              >
+                {`${level.candidatesTested} candidates evaluated`}
+              </text>
+            </g>
+          ))}
+
+          <motion.g initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
+            <rect
+              x={ROOT.x - ROOT.width / 2}
+              y={ROOT.y}
+              width={ROOT.width}
+              height={ROOT.height}
+              rx="8"
+              fill="#0a1029"
+              stroke="#00f5d4"
+              strokeWidth="1.5"
+              filter="drop-shadow(0 0 20px rgba(0,245,212,0.4)) drop-shadow(0 0 40px rgba(0,245,212,0.15))"
+            />
+            <line
+              x1={ROOT.x}
+              y1={ROOT.y + ROOT.height}
+              x2={ROOT.x}
+              y2={ROOT.y + ROOT.height + 12}
+              stroke="#00f5d4"
+              strokeWidth="2"
+              strokeLinecap="square"
+            />
+            <text x={ROOT.x - ROOT.width / 2 + 18} y={ROOT.y + 18} className="fill-cyan-200 font-mono text-[10px]">
+              // HYPOTHESIS
+            </text>
+            <text x={ROOT.x - ROOT.width / 2 + 18} y={ROOT.y + 40} className="fill-white text-[14px]">
+              {tree.nodes[0].description.slice(0, 68)}
+            </text>
+          </motion.g>
+
+          {tree.edges.map((edge, index) => (
+            <motion.polyline
+              key={`${edge.from.id}-${edge.to.id}`}
+              points={edgePoints(edge.from, edge.to)}
+              fill="none"
+              stroke={edge.isPath ? '#00f5d4' : '#3a4a6a'}
+              strokeWidth={edge.to.status === 'winner' ? 3 : edge.isPath ? 2.5 : 1.5}
+              strokeLinecap="square"
+              strokeLinejoin="miter"
+              opacity={edge.isPath ? 1 : 0.85}
+              filter={edge.isPath ? 'drop-shadow(0 0 4px rgba(0,245,212,0.6))' : 'none'}
+              initial={{ pathLength: 0 }}
+              animate={{ pathLength: 1 }}
+              transition={{ delay: 0.25 + index * 0.08, duration: 0.42, ease: 'easeInOut' }}
+            />
+          ))}
+
+          {tree.nodes
+            .filter((node) => node.status !== 'root')
+            .map((node, index) => (
+              <StructureNode
+                key={node.id}
+                node={node}
+                index={index}
+                onHoverStart={showTooltip}
+                onHoverMove={moveTooltip}
+                onHoverEnd={hideTooltip}
+              />
+            ))}
         </svg>
-
-        {tooltip && (
-          <div
-            className="pointer-events-none fixed z-30 w-[240px] rounded-xl border border-cyan-300/30 bg-[#06111f]/95 p-3 text-left text-xs text-white shadow-[0_0_28px_rgba(34,211,238,0.18)]"
-            style={{
-              left: Math.min(tooltip.x + 16, window.innerWidth - 260),
-              top: Math.min(tooltip.y + 16, window.innerHeight - 180),
-            }}
-          >
-            <p className="font-semibold text-white">{tooltip.node.formula || tooltip.node.label}</p>
-            <p className="mt-1 font-mono text-cyan-100/70">
-              Score {tooltip.node.score ?? 'n/a'} · {tooltip.node.status}
-            </p>
-            <p className="mt-2 leading-5 text-white/65">{tooltip.node.reason || tooltip.node.description}</p>
-          </div>
-        )}
-
-        <DetailPanel node={selectedNode} onClose={() => setSelectedNode(null)} />
       </div>
 
+      <AnimatePresence>
+        {tooltipNode && (
+          <DecisionTreeTooltip
+            node={tooltipNode}
+            position={tooltipPosition}
+            onMouseEnter={() => setTooltipLocked(true)}
+            onMouseLeave={() => {
+              setTooltipLocked(false)
+              setTooltipNode(null)
+            }}
+          />
+        )}
+      </AnimatePresence>
       <style>{`
-        @keyframes tree-draw {
-          from { stroke-dashoffset: 180; opacity: 0; }
-          to { stroke-dashoffset: 0; }
+        @keyframes winner-pulse {
+          0%, 100% { filter: drop-shadow(0 0 16px rgba(0, 245, 212, 0.9)); }
+          50% { filter: drop-shadow(0 0 28px rgba(0, 245, 212, 1)); }
         }
-        @keyframes node-pop {
-          from { opacity: 0; transform: scale(0.82) translateY(12px); }
-          to { opacity: 1; transform: scale(1) translateY(0); }
+        .decision-tree-winner {
+          animation: winner-pulse 2.4s ease-in-out infinite;
         }
       `}</style>
     </div>

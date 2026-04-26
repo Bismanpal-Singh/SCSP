@@ -229,7 +229,7 @@ export default function IntroLoader({ onPhaseChange, onComplete }) {
 
   return (
     <motion.div
-      className={['fixed inset-0 z-[100] flex items-center justify-center overflow-hidden bg-black', shattering ? 'intro-shatter-active' : ''].join(' ')}
+      className={['pointer-events-none fixed inset-0 z-[100] flex items-center justify-center overflow-hidden bg-black', shattering ? 'intro-shatter-active' : ''].join(' ')}
       initial={{ opacity: 1 }}
       animate={{ opacity: phase === 'complete' ? 0 : 1 }}
       transition={{ duration: OVERLAY_FADE_S, ease: [0.22, 1, 0.36, 1] }}

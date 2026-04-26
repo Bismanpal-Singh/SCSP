@@ -287,22 +287,15 @@ function ResultsSurface({
   query,
 }) {
   return (
-    <div className="mx-auto w-full max-w-5xl opacity-0 animate-fade-in">
+    <div className="mx-auto w-full max-w-[1440px] px-4 opacity-0 animate-fade-in sm:px-8">
       <div className="overflow-hidden rounded-2xl border border-violet-500/20 bg-[#050509]/90 shadow-[0_0_44px_rgba(139,92,246,0.12),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-xl">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.07] bg-white/[0.035] px-4 py-3">
+        <div className="border-b border-white/[0.07] bg-white/[0.035] px-4 py-3">
           <div className="text-left">
             <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-violet-300/70">
               Mantle AI Agent
             </p>
             <p className="mt-1 max-w-2xl text-sm text-white/65">&ldquo;{query}&rdquo;</p>
           </div>
-          <button
-            type="button"
-            onClick={onReset}
-            className="font-mono text-[10px] uppercase tracking-[0.16em] text-violet-300/70 transition hover:text-violet-200"
-          >
-            New Search
-          </button>
         </div>
 
         <div className="px-4 py-4 sm:px-6 sm:py-5">
@@ -310,7 +303,12 @@ function ResultsSurface({
             <span className="font-mono text-xs text-white/45">
               {isRunning ? 'Running...' : finalCandidate ? 'Complete' : 'Stopped'}
             </span>
-            {isRunning && <span className="pulse-dot" aria-label="Agent running" />}
+            <div className="flex items-center gap-3">
+              {isRunning && <span className="pulse-dot" aria-label="Agent running" />}
+              <Button onClick={onReset} size="sm">
+                New Search
+              </Button>
+            </div>
           </div>
 
           {error && (
@@ -327,7 +325,7 @@ function ResultsSurface({
           )}
 
           <TabNav activeTab={activeTab} onTabChange={onTabChange} />
-          <div className="pt-5">
+          <div className="pt-4">
             {activeTab === 0 && (
               <AgentAtWorkPanel
                 finalCandidate={finalCandidate}
