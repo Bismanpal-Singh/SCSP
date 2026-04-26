@@ -91,11 +91,9 @@ export default function DecisionTreeTooltip({ node, position, onMouseEnter, onMo
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-3">
-        <Property label="Magnetic moment" value={node.magneticMoment} />
         <Property label="Thermal stability" value={node.thermalStability} />
         <Property label="Formation energy" value={node.formationEnergy} />
         <Property label="China dependency" value={node.chinaDependency} />
-        <Property label="Supply risk" value={node.supplyChainRisk} />
         <Property label="MP ID" value={node.mpId} />
       </div>
       {mpUrl && (

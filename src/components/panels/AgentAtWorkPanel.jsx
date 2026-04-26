@@ -110,13 +110,12 @@ function ResultsCard({ finalCandidate, onViewReasoning, onViewResults }) {
           </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <WinnerMetric label="Magnetic moment" value={finalCandidate.magneticMoment} />
             <WinnerMetric label="Thermal stability" value={finalCandidate.thermalStability} />
             <WinnerMetric label="China dependency" value={finalCandidate.chinaDependency} />
           </div>
 
           <p className="mt-4 text-sm leading-6 text-white/66">
-            Supply chain looks clean: {finalCandidate.supplyChainScore ? `${finalCandidate.supplyChainScore}/100 supply chain score` : 'no major dependency flags surfaced'}.
+            Convergence notes indicate no major dependency flags surfaced.
           </p>
         </div>
 

@@ -5,7 +5,6 @@ import Button from './Button'
 import TabNav from './TabNav'
 import AgentAtWorkPanel from './panels/AgentAtWorkPanel'
 import DecisionTreePanel from './panels/DecisionTreePanel'
-import DecisionLogPanel from './panels/DecisionLogPanel'
 import ResultsPanel from './panels/ResultsPanel'
 
 function InputLeadingIcon() {
@@ -386,12 +385,6 @@ function ResultsSurface({
                   isRunning={isRunning}
                   portfolio={portfolio}
                 />
-                <section className="rounded-xl border border-white/10 bg-black/20 p-4 text-left">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/60">Decision Log</p>
-                  <div className="mt-3">
-                    <DecisionLogPanel decisionLog={decisionLog} />
-                  </div>
-                </section>
               </div>
             )}
             {activeTab === 2 && (

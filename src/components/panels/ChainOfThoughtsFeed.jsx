@@ -79,7 +79,7 @@ function buildThoughtLines({
       icon: '⚙',
       tone: 'action',
       time: cursorSeconds,
-      text: `Evaluated ${iteration.candidatesTested ?? 'multiple'} candidates against spec (magnetic moment, stability, supply chain).`,
+      text: `Evaluated ${iteration.candidatesTested ?? 'multiple'} candidates against core spec constraints.`,
     })
     cursorSeconds += 1
 

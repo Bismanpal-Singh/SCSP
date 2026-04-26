@@ -324,8 +324,6 @@ function structureReasoningText(text = '') {
     'PROMISING COMPUTATIONAL CANDIDATE:',
     'WINNER:',
     'Score:',
-    'Magnetic moment:',
-    'Supply chain risk:',
     'China dependency',
     'Synthesis route:',
     'REJECTED\\s+[—-]\\s+INELIGIBLE CANDIDATES',
@@ -379,10 +377,10 @@ function extractIterationSupplement(lines = []) {
   if (bestEligibleMatch) highlights.push(`**Best eligible score:** ${bestEligibleMatch[0].replace(/Best eligible score this round:\s*/i, '')}`)
   if (scoredMatch) highlights.push('**Scoring:** Candidate scoring completed for this iteration.')
 
-  const topCandidateMatch = cleaned.match(/Status\s+([A-Za-z0-9₀-₉-]+)\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+✓?\s*([\d.]+%?)\s+(ELIGIBLE|INELIGIBLE|BACKUP_TEST|SAFE_FALLBACK|TEST_FIRST)/i)
+  const topCandidateMatch = cleaned.match(/Status\s+([A-Za-z0-9₀-₉-]+)\s+(\d+(?:\.\d+)?)\s+(?:\d+(?:\.\d+)?)\s+✓?\s*(?:[\d.]+%?)\s+(ELIGIBLE|INELIGIBLE|BACKUP_TEST|SAFE_FALLBACK|TEST_FIRST)/i)
   if (topCandidateMatch) {
-    const [, formula, score, moment, risk, status] = topCandidateMatch
-    highlights.push(`**Top candidate snapshot:** ${formula} | score ${score} | magnetic moment ${moment} | supply risk ${risk} | ${status}`)
+    const [, formula, score, status] = topCandidateMatch
+    highlights.push(`**Top candidate snapshot:** ${formula} | score ${score} | ${status}`)
   }
 
   return highlights
@@ -1452,8 +1450,6 @@ export default function DecisionTreePanel({
                           <tr style={{ background: 'rgba(167, 139, 250, 0.08)' }}>
                             <th style={thStyle}>Formula</th>
                             <th style={thStyle}>Score</th>
-                            <th style={thStyle}>Magnetic Moment</th>
-                            <th style={thStyle}>Supply Risk</th>
                             <th style={thStyle}>Status</th>
                           </tr>
                         </thead>
@@ -1462,10 +1458,6 @@ export default function DecisionTreePanel({
                             <tr key={`${block.iteration}-${candidate.formula}-${idx}`} style={{ borderTop: '1px solid rgba(167, 139, 250, 0.08)' }}>
                               <td style={{ ...tdStyle, fontWeight: 700, color: '#fff' }}>{candidate.formula || 'N/A'}</td>
                               <td style={{ ...tdStyle, color: scoreColor(candidate.score) }}>{candidate.score ?? 'N/A'}</td>
-                              <td style={tdStyle}>{candidate.magneticMoment ?? 'N/A'}</td>
-                              <td style={tdStyle}>
-                                {candidate.supplyChainRisk === 0 ? '✓ 0%' : (candidate.supplyChainRisk !== undefined ? `⚠ ${candidate.supplyChainRisk}%` : 'N/A')}
-                              </td>
                               <td style={tdStyle}>
                                 <span style={statusBadgeStyle(candidate.status || 'PENDING')}>{String(candidate.status || 'PENDING').toUpperCase()}</span>
                               </td>

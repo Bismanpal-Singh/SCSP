@@ -60,10 +60,8 @@ export default function ResultsPanel({ finalCandidate, portfolio = [], ineligibl
 
       <div className="grid gap-3 sm:grid-cols-2">
         <Metric label="Score" value={finalCandidate.score} />
-        <Metric label="Magnetic moment" value={finalCandidate.magneticMoment} />
         <Metric label="Thermal stability" value={finalCandidate.thermalStability} />
         <Metric label="Formation energy" value={finalCandidate.formationEnergy} />
-        <Metric label="Supply chain score" value={finalCandidate.supplyChainScore} />
         <Metric label="China dependency" value={finalCandidate.chinaDependency} />
       </div>
 
@@ -96,7 +94,6 @@ export default function ResultsPanel({ finalCandidate, portfolio = [], ineligibl
                     <th className="py-2 pr-3">Overall</th>
                     <th className="py-2 pr-3">Sci Fit</th>
                     <th className="py-2 pr-3">Stability</th>
-                    <th className="py-2 pr-3">Supply Risk</th>
                     <th className="py-2 pr-3">Confidence</th>
                   </tr>
                 </thead>
@@ -125,7 +122,6 @@ export default function ResultsPanel({ finalCandidate, portfolio = [], ineligibl
                         <td className="py-2 pr-3">{scores.overall ?? '—'}</td>
                         <td className="py-2 pr-3">{scores.scientific_fit ?? '—'}</td>
                         <td className="py-2 pr-3">{scores.stability ?? '—'}</td>
-                        <td className="py-2 pr-3">{scores.supply_chain_safety ?? '—'}</td>
                         <td className="py-2 pr-3">{scores.evidence_confidence ?? '—'}</td>
                       </tr>
                     )

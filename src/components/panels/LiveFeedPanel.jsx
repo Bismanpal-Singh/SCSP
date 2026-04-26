@@ -36,18 +36,14 @@ export default function LiveFeedPanel({ iterations = [], isRunning = false }) {
 
           {iteration.bestCandidate && (
             <div className="mt-3 overflow-hidden rounded-lg border border-white/10 bg-black/20">
-              <div className="grid grid-cols-5 gap-2 border-b border-white/10 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.12em] text-white/45">
+              <div className="grid grid-cols-3 gap-2 border-b border-white/10 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.12em] text-white/45">
                 <span>Formula</span>
                 <span>Score</span>
-                <span>Magnetic Moment</span>
-                <span>Supply Risk</span>
                 <span>Status</span>
               </div>
-              <div className="grid grid-cols-5 gap-2 px-3 py-2 text-sm text-white/80">
+              <div className="grid grid-cols-3 gap-2 px-3 py-2 text-sm text-white/80">
                 <span>{iteration.bestCandidate.formula || 'N/A'}</span>
                 <span>{iteration.bestCandidate.score ?? 'N/A'}</span>
-                <span>{iteration.bestCandidate.magneticMoment ?? 'N/A'}</span>
-                <span>{iteration.bestCandidate.supplyChainRisk ?? 'N/A'}%</span>
                 <span>{iteration.bestCandidate.eligible === false ? 'INELIGIBLE' : 'ELIGIBLE'}</span>
               </div>
             </div>
