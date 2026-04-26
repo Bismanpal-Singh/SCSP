@@ -12,14 +12,20 @@ import json
 
 from .memory import AgentMemory
 from . import mocks
+from ..materials.search import apply_hard_filters
 from ..demo import (
     print_candidate,
+    print_experiment_tree,
     print_final_result,
     print_header,
+    print_ineligible_panel,
     print_iteration,
     print_notice,
+    print_portfolio_table,
     print_reasoning,
     print_status_line,
+    print_test_queue,
+    print_uncertainty_map,
 )
 
 
@@ -59,33 +65,6 @@ def _candidate_rejection_reason(candidate: dict) -> str:
 
 def _candidate_elements(candidate: dict) -> set[str]:
     return {str(el).strip() for el in (candidate.get("elements", []) or []) if str(el).strip()}
-
-
-def _apply_hard_eligibility(spec: dict, candidate: dict) -> dict:
-    """Hard constraints: banned elements and radioactive exclusions."""
-    enriched = dict(candidate)
-    reasons = list(enriched.get("ineligibility_reasons", []) or [])
-    elements = _candidate_elements(enriched)
-
-    banned = set(spec.get("banned_elements", []) or [])
-    banned_overlap = sorted(elements & banned)
-    if banned_overlap:
-        reasons.append(f"contains banned element(s): {', '.join(banned_overlap)}")
-
-    target_props = spec.get("target_props", {}) or {}
-    if bool(target_props.get("exclude_radioactive", False)):
-        radioactive_set = {"U", "Th", "Ra", "Po", "Ac", "Pa"}
-        radioactive_overlap = sorted(elements & radioactive_set)
-        if radioactive_overlap:
-            reasons.append(f"contains radioactive element(s): {', '.join(radioactive_overlap)}")
-
-    if reasons:
-        enriched["eligible"] = False
-        enriched["ineligibility_reasons"] = list(dict.fromkeys(reasons))
-    else:
-        enriched.setdefault("eligible", True)
-        enriched.setdefault("ineligibility_reasons", [])
-    return enriched
 
 
 def _query_safe_spec(spec: dict) -> dict:
@@ -144,28 +123,28 @@ def _load_p2_functions():
     return parse_fn, interpret_fn, generate_next_fn, synthesis_fn, portfolio_fn
 
 
-def _load_fast_candidates(cache_path: str) -> list[dict]:
+def _load_fast_candidates(cache_path: str, cache_key: str = "magnet-defense") -> list[dict]:
     with open(cache_path, "r", encoding="utf-8") as f:
         payload = json.load(f)
     if isinstance(payload, dict):
+        bucket = payload.get(cache_key, {})
+        if isinstance(bucket, dict):
+            candidates = bucket.get("candidates", [])
+            if isinstance(candidates, list):
+                return [item for item in candidates if isinstance(item, dict)]
         candidates = payload.get("candidates")
-        if not isinstance(candidates, list):
-            candidates = payload.get("top_candidates", [])
-        return candidates if isinstance(candidates, list) else []
+        if isinstance(candidates, list):
+            return [item for item in candidates if isinstance(item, dict)]
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
     return []
 
 
 def _latest_portfolio(memory_dict: dict) -> dict:
-    history = memory_dict.get("portfolio_history", {}) or {}
-    if not isinstance(history, dict) or not history:
+    history = memory_dict.get("portfolio_history", []) or []
+    if not isinstance(history, list) or not history:
         return {}
-    try:
-        latest_key = max(int(key) for key in history.keys())
-    except Exception:
-        latest_key = max(history.keys())
-    return dict(history.get(latest_key, {}))
+    return dict(history[-1] or {})
 
 
 def run_agent(
@@ -176,6 +155,7 @@ def run_agent(
     allow_mock_fallback: bool = True,
     fast_mode: bool = False,
     demo_cache_path: str = "criticalmat/materials/demo_cache.json",
+    cache_key: str = "magnet-defense",
 ) -> dict:
     """Run iterative search/scoring/reasoning loop."""
     memory = AgentMemory()
@@ -184,9 +164,10 @@ def run_agent(
     scored_candidates: list[dict] = []
     convergence_score_threshold = 95
     min_iterations_before_stop = 2
-    fast_candidates = _load_fast_candidates(demo_cache_path) if fast_mode else []
+    fast_candidates = _load_fast_candidates(demo_cache_path, cache_key=cache_key) if fast_mode else []
     p2_synthesis_fn = None
     p2_portfolio_fn = None
+    latest_spec: dict = {}
 
     print_header(current_hypothesis)
     if fast_mode:
@@ -218,6 +199,7 @@ def run_agent(
                     print_notice(f"1) Real P2 import failed ({exc}); using mock reasoning.", style="yellow")
 
         spec = p2_parse_fn(current_hypothesis)
+        latest_spec = dict(spec)
         retrieval_spec = _query_safe_spec(spec)
         memory.add_composition(current_hypothesis)
         print_status_line("1) Parsed hypothesis into structured spec.")
@@ -257,21 +239,26 @@ def run_agent(
         for candidate in candidates:
             scored = dict(candidate)
             scored["score"] = p1_score_fn(scored, spec)
-            scored = _apply_hard_eligibility(spec, scored)
             scored_candidates.append(scored)
 
-            if not _is_candidate_eligible(scored) or scored["score"] < 50:
+            if scored["score"] < 50:
                 memory.add_rejection(
                     scored.get("formula", "unknown"),
                     _candidate_rejection_reason(scored),
                 )
-            if not _is_candidate_eligible(scored):
-                memory.add_ineligible(
-                    scored.get("formula", "unknown"),
-                    _candidate_rejection_reason(scored),
-                )
 
-        scored_candidates.sort(
+        eligible_candidates, ineligible_candidates = apply_hard_filters(scored_candidates, spec)
+        for candidate in ineligible_candidates:
+            memory.add_ineligible(
+                candidate.get("formula", "unknown"),
+                candidate.get("reason", "Hard filter constraint violation"),
+            )
+            memory.add_rejection(
+                candidate.get("formula", "unknown"),
+                candidate.get("reason", "Hard filter constraint violation"),
+            )
+
+        eligible_candidates.sort(
             key=lambda c: (
                 c.get("score", 0),
                 c.get("magnetic_moment", 0.0),
@@ -279,9 +266,9 @@ def run_agent(
             ),
             reverse=True,
         )
+        scored_candidates = list(eligible_candidates) + list(ineligible_candidates)
         memory.record_iteration(iteration, scored_candidates)
 
-        eligible_candidates = [candidate for candidate in scored_candidates if _is_candidate_eligible(candidate)]
         selected_top = eligible_candidates[0] if eligible_candidates else (scored_candidates[0] if scored_candidates else {})
         if selected_top and _is_candidate_eligible(selected_top):
             current_best_score = int(memory.current_best.get("score", -1)) if memory.current_best else -1
@@ -300,14 +287,23 @@ def run_agent(
                 status="ELIGIBLE" if _is_candidate_eligible(selected_top) else "INELIGIBLE",
             )
 
-        interpretation = p2_interpret_fn(scored_candidates[:5], spec, iteration)
+        try:
+            interpretation = p2_interpret_fn(
+                eligible_candidates[:5],
+                spec,
+                iteration,
+                ineligible_candidates=ineligible_candidates,
+            )
+        except TypeError:
+            interpretation = p2_interpret_fn(eligible_candidates[:5], spec, iteration)
         print_reasoning(interpretation, iteration)
 
-        eligible_top = [candidate for candidate in scored_candidates if _is_candidate_eligible(candidate)][:5]
+        eligible_top = eligible_candidates[:5]
         iteration_portfolio = {}
         if callable(p2_portfolio_fn):
             iteration_portfolio = p2_portfolio_fn(eligible_top, spec, memory.to_dict()) or {}
-            memory.record_portfolio(iteration, iteration_portfolio)
+            memory.portfolio_history.append(iteration_portfolio)
+            memory.experiment_queue = list(iteration_portfolio.get("test_queue", []) or [])
 
         if iteration >= min_iterations_before_stop and top_score > convergence_score_threshold:
             print_notice(f"Converged: best score exceeded {convergence_score_threshold}.", style="green")
@@ -349,14 +345,49 @@ def run_agent(
         print_final_result(best_candidate)
 
     latest_portfolio = _latest_portfolio(final_memory)
-    return {
-        "final_hypothesis": current_hypothesis,
-        "best_candidate": best_candidate,
-        "memory": final_memory,
-        "mission": str(latest_portfolio.get("mission", hypothesis)),
-        "constraints": dict(latest_portfolio.get("constraints", {})),
-        "portfolio": list(latest_portfolio.get("portfolio", [])),
-        "ineligible": list(final_memory.get("ineligible_candidates", [])),
-        "test_queue": list(final_memory.get("appointment_queue", [])),
-        "provenance_tree": dict(latest_portfolio.get("provenance_tree", {})),
+    portfolio_entries = list(latest_portfolio.get("portfolio", []))
+    ineligible_entries = list(final_memory.get("ineligible_candidates", []))
+    test_queue = list(final_memory.get("experiment_queue", []))
+    target_props = dict((latest_spec or {}).get("target_props", {}) or {})
+    constraints_payload = {
+        "banned_elements": list((latest_spec or {}).get("banned_elements", [])),
+        "material_class": str(target_props.get("material_class", "unknown")),
+        "exclude_radioactive": bool(target_props.get("exclude_radioactive", True)),
+        "require_solid_state": bool(target_props.get("require_solid_state", True)),
     }
+
+    final_result = {
+        "mission": hypothesis,
+        "constraints": dict(latest_spec),
+        "portfolio": portfolio_entries,
+        "ineligible": ineligible_entries,
+        "test_queue": test_queue,
+        "provenance_tree": {
+            "mission": hypothesis,
+            "constraints": constraints_payload,
+            "candidate_search": {
+                "iterations_run": len(best_scores),
+                "ineligible": [
+                    {"formula": row.get("formula", "unknown"), "reason": row.get("reason", "")}
+                    for row in ineligible_entries
+                ],
+                "portfolio": [
+                    {
+                        "rank": row.get("rank", idx + 1),
+                        "candidate": row.get("candidate", row.get("formula", "unknown")),
+                        "status": row.get("status", ""),
+                    }
+                    for idx, row in enumerate(portfolio_entries)
+                ],
+            },
+            "test_queue": test_queue,
+        },
+        "best_candidate": best_candidate,
+    }
+
+    print_ineligible_panel(final_result.get("ineligible", []))
+    print_portfolio_table(final_result.get("portfolio", []))
+    print_uncertainty_map(final_result.get("portfolio", []))
+    print_experiment_tree(final_result)
+    print_test_queue(final_result.get("test_queue", []))
+    return final_result

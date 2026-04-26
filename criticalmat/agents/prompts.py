@@ -77,7 +77,13 @@ Rules for material class:
 - If the user asks for batteries or cathodes, set material_class to "battery_material".
 - If the user asks for semiconductors, set material_class to "semiconductor".
 - If the user asks for coatings, set material_class to "protective_coating".
+- If the user asks for high-temperature structural applications, set material_class to "high_temperature_structural_material".
+- If the user asks for sensing behavior, set material_class to "sensor_material".
 - If unsure, set material_class to "unknown".
+- Allowed values are EXACTLY:
+  permanent_magnet | semiconductor | battery_material |
+  protective_coating | high_temperature_structural_material |
+  sensor_material | unknown
 
 Rules for defense application:
 - If the user mentions missile guidance, drones, actuators, sonar, aircraft, submarines, or defense hardware, include that in defense_application.
@@ -92,7 +98,7 @@ Defaults:
 """
 
 
-def interpret_results_prompt(candidates: list, spec: dict, iteration: int) -> str:
+def interpret_results_prompt(candidates: list, spec: dict, iteration: int, ineligible_candidates: list | None = None) -> str:
     """
     Prompt for interpreting candidate results from the materials search/scoring step.
     """
@@ -112,6 +118,9 @@ Search specification:
 
 Candidate materials:
 {json.dumps(top_candidates, indent=2)}
+
+Hard-filtered ineligible candidates:
+{json.dumps(ineligible_candidates or [], indent=2)}
 
 Your task:
 Write a concise human-readable interpretation for a hackathon demo.
@@ -133,6 +142,8 @@ The best candidate must be selected only from eligible candidates.
 Include an explicit section header exactly as:
 "INELIGIBLE CANDIDATES:"
 and list concise reasons for each ineligible item.
+If no ineligible candidates are provided, include exactly:
+"INELIGIBLE CANDIDATES: None identified in this iteration."
 
 Explain:
 1. What the agent tested in this iteration.
@@ -282,39 +293,38 @@ Inputs:
 
 Return ONLY valid JSON with schema:
 {{
-  "mission": "<short mission statement>",
-  "constraints": {{
-    "material_class": "<value>",
-    "exclude_radioactive": true,
-    "require_solid_state": true,
-    "require_manufacturable": true,
-    "require_non_toxic": true
-  }},
   "portfolio": [
     {{
-      "formula": "X",
-      "status": "TEST_FIRST|BACKUP_TEST|SAFE_FALLBACK",
-      "reason": "short reason"
+      "rank": 1,
+      "candidate": "Mn4Al9",
+      "family": "Mn-Al",
+      "scores": {{
+        "scientific_fit": 85,
+        "stability": 90,
+        "supply_chain_safety": 100,
+        "manufacturability": 80,
+        "evidence_confidence": 90,
+        "overall": 100
+      }},
+      "main_uncertainty": "material-specific uncertainty sentence",
+      "likely_failure_mode": "material-specific likely failure mode sentence",
+      "recommended_experiment": "must include a real technique such as XRD, VSM, SQUID, SEM, EIS, or coincell cycling",
+      "status": "TEST_FIRST|BACKUP_TEST|SAFE_FALLBACK|EXPLORE_LATER|INELIGIBLE"
     }}
   ],
   "test_queue": [
-    {{
-      "rank": 1,
-      "formula": "X",
-      "status": "TEST_FIRST|BACKUP_TEST|SAFE_FALLBACK",
-      "experiment": "short recommended experiment"
-    }}
+    "1. experiment string",
+    "2. experiment string"
   ],
-  "provenance_tree": {{
-    "source": "criticalmat_agent",
-    "based_on_iteration_count": <int>,
-    "notes": "short note"
-  }}
+  "provenance_tree": {{}}
 }}
 
 Rules:
 - Include exactly one TEST_FIRST candidate when possible.
-- Include at least two backups when possible, using BACKUP_TEST or SAFE_FALLBACK.
-- Keep suggestions practical and concise.
+- TEST_FIRST = only highest scoring eligible candidate.
+- BACKUP_TEST = second-best eligible candidate.
+- SAFE_FALLBACK = stable fallback even if lower score.
+- main_uncertainty and likely_failure_mode must be specific to each material.
+- recommended_experiment must name at least one real lab technique.
 - No markdown and no extra keys.
 """

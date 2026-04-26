@@ -3,7 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "set BROWSER=chrome&& vite",
+    "dev": "vite",
+    "dev:frontend": "vite",
+    "dev:backend": "source .venv/bin/activate && python -m uvicorn criticalmat.server:app --host localhost --port 8000",
+    "dev:full": "bash ./start-dev.sh",
     "build": "vite build",
     "preview": "vite preview"
   },

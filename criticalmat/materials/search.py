@@ -97,16 +97,16 @@ def _extract_magnetic_moment(doc: Any) -> float:
 def _family_tag(elements: list[str]) -> str:
     e = set(elements)
     if {"Fe", "N"}.issubset(e):
-        return "fe_n"
+        return "Fe-N"
     if {"Mn", "Al"}.issubset(e):
-        return "mn_al"
+        return "Mn-Al"
     if "Fe" in e and "O" in e:
-        return "ferrite"
+        return "Fe-O"
     if {"Fe", "Co"}.issubset(e):
-        return "fe_co"
+        return "Fe-Co"
     if len(e) == 1:
-        return "elemental"
-    return "other_alloy_or_compound"
+        return "Elemental"
+    return "Other"
 
 
 def _normalize_candidate(doc: Any) -> dict:
@@ -128,9 +128,8 @@ def _normalize_candidate(doc: Any) -> dict:
         "mp_id": mp_id,
         "is_radioactive": is_radioactive,
         "is_solid_likely": is_solid_likely,
-        "is_solid_state_flag": is_solid_likely,
-        "family_tag": family,
-        "material_family_tag": family,
+        "is_solid_state": is_solid_likely,
+        "material_family": family,
         "raw_source_metadata": {
             "mp_id": mp_id,
             "structure_notes": "MP summary entry for virtual screening candidate.",
@@ -301,12 +300,12 @@ def _rank_candidates(candidates: list[dict], target_props: dict | None) -> list[
         return []
     props = target_props or {}
     spec = {"target_props": props}
-    preferred = [str(f).strip().lower() for f in (props.get("preferred_families", []) or [])]
+    preferred = [str(f).strip().lower().replace("_", "-") for f in (props.get("preferred_families", []) or [])]
     ranked = []
     for candidate in candidates:
         enriched = dict(candidate)
         base_score = score_candidate(enriched, spec)
-        family_tag = str(enriched.get("family_tag", "")).lower()
+        family_tag = str(enriched.get("material_family", "")).lower().replace("_", "-")
         family_bonus = 0
         if preferred:
             if family_tag in preferred:
@@ -327,7 +326,7 @@ def _diversify_candidates(candidates: list[dict], final_limit: int) -> list[dict
 
     buckets: dict[str, list[dict]] = defaultdict(list)
     for candidate in candidates:
-        family = str(candidate.get("family_tag", "other_alloy_or_compound"))
+        family = str(candidate.get("material_family", "Other"))
         buckets[family].append(candidate)
 
     # Stable order by best score per family.
@@ -365,7 +364,7 @@ def _set_practicality_flag(candidates: list[dict], target_props: dict | None) ->
     for candidate in candidates:
         practical = (
             not candidate.get("is_radioactive", False)
-            and candidate.get("is_solid_likely", True)
+            and candidate.get("is_solid_state", True)
             and _to_float(candidate.get("stability_above_hull", 1.0), 1.0) <= rules["max_stability_above_hull"]
         )
         if is_magnet_task:
@@ -376,6 +375,50 @@ def _set_practicality_flag(candidates: list[dict], target_props: dict | None) ->
         enriched["is_practical"] = bool(practical)
         marked.append(enriched)
     return marked
+
+
+def apply_hard_filters(candidates: list[dict], spec: dict) -> tuple[list[dict], list[dict]]:
+    """Apply hard eligibility filters and split into eligible/ineligible lists."""
+    eligible_candidates: list[dict] = []
+    ineligible_candidates: list[dict] = []
+    radioactive_elements = {"U", "Th", "Ra", "Po", "Ac", "Pa"}
+
+    target_props = dict((spec or {}).get("target_props", {}) or {})
+    banned_elements = set((spec or {}).get("banned_elements", []) or [])
+    exclude_radioactive = bool(
+        (spec or {}).get("exclude_radioactive", target_props.get("exclude_radioactive", True))
+    )
+    require_solid_state = bool(
+        (spec or {}).get("require_solid_state", target_props.get("require_solid_state", True))
+    )
+
+    for candidate in candidates or []:
+        enriched = dict(candidate)
+        elements = set(enriched.get("elements", []) or [])
+        reasons: list[str] = []
+
+        banned_overlap = sorted(elements & banned_elements)
+        if banned_overlap:
+            reasons.append(f"Contains banned element: {', '.join(banned_overlap)}")
+
+        radioactive_overlap = sorted(elements & radioactive_elements)
+        if exclude_radioactive and radioactive_overlap:
+            reasons.append(f"Contains radioactive element: {', '.join(radioactive_overlap)}")
+
+        if require_solid_state and not bool(enriched.get("is_solid_state", True)):
+            reasons.append("Not solid-state material")
+
+        if reasons:
+            enriched["eligible"] = False
+            enriched["status"] = "INELIGIBLE"
+            enriched["reason"] = "; ".join(reasons)
+            ineligible_candidates.append(enriched)
+        else:
+            enriched["eligible"] = True
+            enriched["status"] = "ELIGIBLE"
+            eligible_candidates.append(enriched)
+
+    return eligible_candidates, ineligible_candidates
 
 
 def _fetch_docs(api_key: str, allowed_elements: list[str], banned_elements: list[str], fetch_n: int) -> list[Any]:

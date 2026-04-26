@@ -26,7 +26,12 @@ def parse_hypothesis(text: str) -> dict:
     raise NotImplementedError
 
 
-def interpret_results(candidates: list[dict], spec: dict, iteration: int) -> str:
+def interpret_results(
+    candidates: list[dict],
+    spec: dict,
+    iteration: int,
+    ineligible_candidates: list[dict] | None = None,
+) -> str:
     """Return a readable summary of current iteration results."""
     raise NotImplementedError
 

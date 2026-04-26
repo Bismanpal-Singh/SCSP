@@ -8,6 +8,7 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, TextColumn
 from rich.table import Table
 from rich.text import Text
+from rich.tree import Tree
 
 console = Console()
 
@@ -126,5 +127,141 @@ def print_final_result(candidate: dict) -> None:
             border_style="green",
             box=box.DOUBLE_EDGE,
             padding=(1, 2),
+        )
+    )
+
+
+def print_portfolio_table(portfolio: list) -> None:
+    table = Table(title="RANKED MATERIAL PORTFOLIO", show_header=True, header_style="bold white")
+    table.add_column("Rank", style="bold", width=6)
+    table.add_column("Candidate", width=12)
+    table.add_column("Status", width=14)
+    table.add_column("Overall", width=9)
+    table.add_column("Sci Fit", width=9)
+    table.add_column("Stability", width=10)
+    table.add_column("Supply Risk", width=12)
+    table.add_column("Confidence", width=11)
+
+    status_colors = {
+        "TEST_FIRST": "green",
+        "BACKUP_TEST": "yellow",
+        "SAFE_FALLBACK": "cyan",
+        "EXPLORE_LATER": "white",
+        "INELIGIBLE": "red",
+    }
+
+    for i, entry in enumerate((portfolio or [])[:5]):
+        scores = dict(entry.get("scores", {}) or {})
+        status = str(entry.get("status", "EXPLORE_LATER"))
+        color = status_colors.get(status, "white")
+        row_style = "bold" if i == 0 else ""
+        table.add_row(
+            str(entry.get("rank", i + 1)),
+            str(entry.get("candidate", "")),
+            f"[{color}]{status}[/{color}]",
+            str(scores.get("overall", "")),
+            str(scores.get("scientific_fit", "")),
+            str(scores.get("stability", "")),
+            str(scores.get("supply_chain_safety", "")),
+            str(scores.get("evidence_confidence", "")),
+            style=row_style,
+        )
+    console.print(table)
+
+
+def print_ineligible_panel(ineligible: list) -> None:
+    if not ineligible:
+        console.print(
+            Panel(
+                "[dim]No candidates failed hard filters in this run.[/dim]",
+                title="REJECTED — INELIGIBLE CANDIDATES",
+                border_style="red",
+            )
+        )
+        return
+
+    lines = []
+    for candidate in ineligible:
+        formula = candidate.get("formula", "Unknown")
+        reason = candidate.get("reason", "Constraint violation")
+        lines.append(f"[red]X[/red] [bold]{formula}[/bold] — {reason}")
+
+    console.print(
+        Panel(
+            "\n".join(lines),
+            title="[red]REJECTED — INELIGIBLE CANDIDATES[/red]",
+            border_style="red",
+        )
+    )
+
+
+def print_uncertainty_map(portfolio: list) -> None:
+    table = Table(title="WHAT WE STILL DON'T KNOW", show_header=True, header_style="bold yellow")
+    table.add_column("Material Family", width=16)
+    table.add_column("Main Uncertainty", width=40)
+    table.add_column("Likely Failure Mode", width=35)
+
+    for entry in (portfolio or [])[:5]:
+        if entry.get("status") == "INELIGIBLE":
+            continue
+        table.add_row(
+            str(entry.get("family", "")),
+            str(entry.get("main_uncertainty", "")),
+            str(entry.get("likely_failure_mode", "")),
+        )
+    console.print(table)
+
+
+def print_experiment_tree(final_result: dict) -> None:
+    tree = Tree("[bold]MISSION[/bold]: " + str(final_result.get("mission", ""))[:60])
+
+    prov = dict(final_result.get("provenance_tree", {}) or {})
+    constraints = dict(prov.get("constraints", {}) or {})
+
+    constraints_branch = tree.add("[bold]Constraints[/bold]")
+    constraints_branch.add(f"Material class: {constraints.get('material_class', '')}")
+    constraints_branch.add(f"Banned elements: {', '.join(constraints.get('banned_elements', []))}")
+    constraints_branch.add(f"Exclude radioactive: {constraints.get('exclude_radioactive', True)}")
+    constraints_branch.add(f"Require solid-state: {constraints.get('require_solid_state', True)}")
+
+    search = dict(prov.get("candidate_search", {}) or {})
+    search_branch = tree.add("[bold]Candidate Search[/bold]")
+
+    ineligible = list(search.get("ineligible", []) or [])
+    if ineligible:
+        rejected_branch = search_branch.add("[red]INELIGIBLE[/red]")
+        for candidate in ineligible:
+            rejected_branch.add(f"[red]X[/red] {candidate.get('formula', 'Unknown')} — {candidate.get('reason', '')}")
+    else:
+        search_branch.add("[dim]No candidates rejected[/dim]")
+
+    portfolio = list(search.get("portfolio", []) or [])
+    portfolio_branch = search_branch.add("[green]PORTFOLIO[/green]")
+    for candidate in portfolio:
+        portfolio_branch.add(
+            f"Rank {candidate.get('rank', '')}: {candidate.get('candidate', '')} [{candidate.get('status', '')}]"
+        )
+
+    queue = list(final_result.get("test_queue", []) or [])
+    queue_branch = tree.add("[bold cyan]Lab-Ready Test Queue[/bold cyan]")
+    for item in queue:
+        queue_branch.add(str(item))
+
+    console.print(tree)
+
+
+def print_test_queue(test_queue: list) -> None:
+    table = Table(show_header=False, box=None, padding=(0, 1))
+    table.add_column("Num", style="bold cyan", width=4)
+    table.add_column("Experiment", width=80)
+
+    for i, item in enumerate(test_queue or [], 1):
+        table.add_row(str(i), str(item))
+
+    console.print(
+        Panel(
+            table,
+            title="[bold cyan]LAB-READY TEST QUEUE — HAND OFF TO RESEARCHERS[/bold cyan]",
+            border_style="cyan",
         )
     )

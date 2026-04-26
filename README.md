@@ -32,6 +32,15 @@ Fill `.env` with:
 
 ## Run
 
+Start backend + frontend together:
+
+```bash
+npm run dev:full
+```
+
+Frontend: `http://localhost:3003`  
+Backend API: `http://localhost:8000`
+
 Live run (uses Materials Project API):
 
 ```bash

@@ -15,9 +15,9 @@ class AgentMemory:
     current_best: dict = field(default_factory=dict)
     rejection_reasons: list[dict] = field(default_factory=list)
     ineligible_candidates: list[dict] = field(default_factory=list)
-    portfolio_history: dict[int, dict] = field(default_factory=dict)
-    uncertainty_gap: list[dict] = field(default_factory=list)
-    appointment_queue: list[dict] = field(default_factory=list)
+    portfolio_history: list[dict] = field(default_factory=list)
+    uncertainty_gaps: list[str] = field(default_factory=list)
+    experiment_queue: list[str] = field(default_factory=list)
 
     def record_iteration(self, iteration: int, scored_candidates: list[dict]) -> None:
         """Store score list and keep best candidate updated."""
@@ -25,13 +25,8 @@ class AgentMemory:
         self.scores_by_iteration[iteration] = scores
         if len(scores) >= 2:
             sorted_scores = sorted(scores, reverse=True)
-            self.uncertainty_gap.append(
-                {
-                    "iteration": iteration,
-                    "top_score": sorted_scores[0],
-                    "runner_up_score": sorted_scores[1],
-                    "gap": sorted_scores[0] - sorted_scores[1],
-                }
+            self.uncertainty_gaps.append(
+                f"Iteration {iteration}: top-vs-runner-up score gap is {sorted_scores[0] - sorted_scores[1]}"
             )
 
         if not scored_candidates:
@@ -42,7 +37,7 @@ class AgentMemory:
             self.current_best = dict(top)
 
         for candidate in scored_candidates:
-            family = str(candidate.get("material_family_tag") or candidate.get("family_tag") or "").strip()
+            family = str(candidate.get("material_family") or "").strip()
             if family and family not in self.tried_families:
                 self.tried_families.append(family)
 
@@ -61,10 +56,10 @@ class AgentMemory:
 
     def record_portfolio(self, iteration: int, portfolio: dict) -> None:
         """Store generated lab-ready portfolio and update appointment queue."""
-        self.portfolio_history[iteration] = dict(portfolio or {})
+        self.portfolio_history.append(dict(portfolio or {}))
         queue = list((portfolio or {}).get("test_queue", []) or [])
         if queue:
-            self.appointment_queue = queue
+            self.experiment_queue = [str(item) for item in queue]
 
     def to_dict(self) -> dict:
         """Return a serializable memory shape for teammate functions."""
@@ -75,7 +70,7 @@ class AgentMemory:
             "current_best": dict(self.current_best),
             "rejection_reasons": list(self.rejection_reasons),
             "ineligible_candidates": list(self.ineligible_candidates),
-            "portfolio_history": dict(self.portfolio_history),
-            "uncertainty_gap": list(self.uncertainty_gap),
-            "appointment_queue": list(self.appointment_queue),
+            "portfolio_history": list(self.portfolio_history),
+            "uncertainty_gaps": list(self.uncertainty_gaps),
+            "experiment_queue": list(self.experiment_queue),
         }
