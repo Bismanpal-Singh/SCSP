@@ -278,22 +278,24 @@ export default function AgentAtWorkPanel({
           ) : (
             <motion.div
               key="narration"
-              className="h-full overflow-y-auto pr-28"
+              className="h-full overflow-y-auto"
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.6 }}
             >
-              <AnimatePresence initial={false}>
-                {visibleLines.map((line, index) => (
-                  <NarrationLine
-                    key={line.id}
-                    isActive={index === visibleLines.length - 1 && !completedLineIds.has(line.id)}
-                    text={line.renderedText}
-                    tone={line.tone}
-                  />
-                ))}
-              </AnimatePresence>
+              <div className="pr-28">
+                <AnimatePresence initial={false}>
+                  {visibleLines.map((line, index) => (
+                    <NarrationLine
+                      key={line.id}
+                      isActive={index === visibleLines.length - 1 && !completedLineIds.has(line.id)}
+                      text={line.renderedText}
+                      tone={line.tone}
+                    />
+                  ))}
+                </AnimatePresence>
+              </div>
               {isComplete && finalCandidate && showLogs && (
                 <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-violet-300/25 bg-violet-300/[0.06] px-3 py-2 text-xs text-violet-100/90">
                   <p>

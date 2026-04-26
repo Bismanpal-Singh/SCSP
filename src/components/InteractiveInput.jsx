@@ -450,7 +450,7 @@ function ResultsSurface({
                   onClick={() => onFollowUp?.('another_direction')}
                   className="rounded-md border border-cyan-300/30 px-3 py-1.5 text-xs font-semibold text-cyan-100/90 transition hover:bg-cyan-300/10"
                 >
-                  Look for another direction
+                  Look for another material
                 </button>
                 <input
                   type="text"

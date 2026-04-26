@@ -342,9 +342,9 @@ function structureReasoningText(text = '') {
     'Lessons Learned:',
     'Disclaimer:',
   ]
-  const pattern = new RegExp(`\\s*(${labels.join('|')})\\s*`, 'gi')
+  const pattern = new RegExp(`(^|\\n)\\s*(${labels.join('|')})\\s*`, 'gim')
   const withBreaks = String(text)
-    .replace(pattern, '\n\n**$1** ')
+    .replace(pattern, '$1\n\n**$2** ')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
   return withBreaks.replace(/^\*\*(Iteration \d+:)\*\*\s*/i, '**$1** ')
@@ -371,9 +371,24 @@ function extractIterationSupplement(lines = []) {
   const bestScoreMatch = cleaned.match(/Best score so far\s*\d+/i)
   const bestEligibleMatch = cleaned.match(/Best eligible score this round:\s*\d+/i)
   const scoredMatch = cleaned.match(/Scored candidates/i)
+  const bestScoreValue = bestScoreMatch
+    ? Number(bestScoreMatch[0].replace(/Best score so far\s*/i, '')) || 0
+    : null
+  const bestEligibleValue = bestEligibleMatch
+    ? Number(bestEligibleMatch[0].replace(/Best eligible score this round:\s*/i, '')) || 0
+    : null
 
   if (iterationMatch) highlights.push(`**Progress:** ${iterationMatch[0]}`)
-  if (bestScoreMatch) highlights.push(`**Best score so far:** ${bestScoreMatch[0].replace(/Best score so far\s*/i, '')}`)
+  if (bestScoreMatch) {
+    const normalizedBestScore = (
+      bestScoreValue === 0
+      && typeof bestEligibleValue === 'number'
+      && bestEligibleValue > 0
+    )
+      ? bestEligibleValue
+      : bestScoreValue
+    highlights.push(`**Best score so far:** ${normalizedBestScore}`)
+  }
   if (bestEligibleMatch) highlights.push(`**Best eligible score:** ${bestEligibleMatch[0].replace(/Best eligible score this round:\s*/i, '')}`)
   if (scoredMatch) highlights.push('**Scoring:** Candidate scoring completed for this iteration.')
 
