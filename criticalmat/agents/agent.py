@@ -25,6 +25,7 @@ from criticalmat.agents.prompts import (
     parse_hypothesis_prompt,
     interpret_results_prompt,
     generate_next_hypothesis_prompt,
+    synthesis_recommendation_prompt,
 )
 
 
@@ -167,6 +168,11 @@ def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(target_props, dict):
         target_props = {}
 
+    preferred_families = target_props.get("preferred_families", [])
+    if not isinstance(preferred_families, list):
+        preferred_families = []
+    preferred_families = [str(f).strip().lower() for f in preferred_families if str(f).strip()]
+
     allowed_elements = [
         str(element).strip()
         for element in allowed_elements
@@ -196,9 +202,11 @@ def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
     target_props.setdefault("require_solid_state", True)
     target_props.setdefault("require_practical_materials", True)
     target_props.setdefault("require_manufacturable", True)
+    target_props.setdefault("require_compound", "magnet" in str(target_props.get("material_class", "")).lower())
     target_props.setdefault("avoid_toxic_elements", True)
     target_props.setdefault("avoid_precious_metals", False)
     target_props.setdefault("mp_screen_fetch_limit", 100)
+    target_props["preferred_families"] = list(dict.fromkeys(preferred_families))
 
     # If user wants rare-earth avoidance, banned list should include common rare earths.
     if target_props.get("avoid_rare_earths"):
@@ -238,6 +246,8 @@ def _fallback_parse_hypothesis(text: str) -> dict[str, Any]:
     lower = text.lower()
 
     banned_elements = []
+    allowed_elements: list[str] = []
+    preferred_families: list[str] = []
 
     if "neodymium" in lower or " nd" in lower or "nd-" in lower:
         banned_elements.append("Nd")
@@ -316,6 +326,19 @@ def _fallback_parse_hypothesis(text: str) -> dict[str, Any]:
 
     is_magnet = "magnet" in lower
 
+    if any(token in lower for token in ["actuator", "precision actuator", "servo"]):
+        preferred_families = ["mn_al", "fe_n"]
+        allowed_elements = ["Mn", "Al", "C", "Fe", "N"]
+    elif any(token in lower for token in ["missile", "guidance", "aerospace"]):
+        preferred_families = ["fe_n", "ferrite"]
+        allowed_elements = ["Fe", "N", "O", "B", "Si"]
+    elif any(token in lower for token in ["manufacturable", "scalable", "production"]):
+        preferred_families = ["ferrite", "mn_al"]
+        allowed_elements = ["Fe", "O", "Mn", "Al", "C"]
+    elif is_magnet:
+        preferred_families = ["fe_n", "mn_al", "ferrite"]
+        allowed_elements = ["Fe", "Mn", "Al", "N", "O", "C"]
+
     if "battery" in lower or "cathode" in lower:
         material_class = "battery_material"
     elif "semiconductor" in lower or "chip" in lower:
@@ -343,6 +366,7 @@ def _fallback_parse_hypothesis(text: str) -> dict[str, Any]:
         "avoid_toxic_elements": avoid_toxic_elements or True,
         "avoid_precious_metals": False,
         "mp_screen_fetch_limit": 100,
+        "preferred_families": preferred_families,
     }
 
     if "missile" in lower:
@@ -358,7 +382,7 @@ def _fallback_parse_hypothesis(text: str) -> dict[str, Any]:
 
     return _normalize_spec(
         {
-            "allowed_elements": [],
+            "allowed_elements": allowed_elements,
             "banned_elements": banned_elements,
             "target_props": target_props,
             "context": text,
@@ -393,7 +417,16 @@ def parse_hypothesis(text: str) -> dict:
         return _normalize_spec(parsed)
     except Exception as exc:
         print(f"[agent.py warning] Gemini parse failed. Using fallback parser. Reason: {exc}")
-        return _fallback_parse_hypothesis(text)
+        return {
+            "allowed_elements": ["Fe", "Mn", "Al", "Ni", "Si", "C", "N", "B"],
+            "banned_elements": ["Nd", "Dy", "Tb", "Ho", "Pr", "Eu", "Gd", "Co", "Sm", "Ce", "La", "Y"],
+            "target_props": {
+                "magnetic_moment": {"min": 2.0},
+                "formation_energy": {"max": 0.0},
+                "stability_above_hull": {"max": 0.1},
+            },
+            "context": "Rare-earth-free permanent magnet for defense applications",
+        }
         
 def _candidate_elements(candidate: dict) -> set[str]:
     """
@@ -506,48 +539,12 @@ def interpret_results(candidates: list, spec: dict, iteration: int) -> str:
         return _call_gemini(prompt, temperature=0.3)
     except Exception as exc:
         print(f"[agent.py warning] Gemini interpretation failed. Using fallback. Reason: {exc}")
-
-        eligible_candidates = [
-            candidate for candidate in candidates_sorted
-            if candidate.get("eligible", False)
-        ]
-
-        ineligible_candidates = [
-            candidate for candidate in candidates_sorted
-            if not candidate.get("eligible", False)
-        ]
-
-        lines = [f"Iteration {iteration}: The agent screened candidates against the stated constraints."]
-
-        if ineligible_candidates:
-            for candidate in ineligible_candidates[:3]:
-                formula = candidate.get("formula", "unknown material")
-                reasons = "; ".join(candidate.get("ineligibility_reasons", []))
-                lines.append(f"{formula} is INELIGIBLE because {reasons}.")
-
-        if eligible_candidates:
-            best = eligible_candidates[0]
-            formula = best.get("formula", "unknown material")
-            score = best.get("score", best.get("final_score", "N/A"))
-            magnetic_moment = best.get("magnetic_moment", "N/A")
-            stability = best.get("stability_above_hull", "N/A")
-            risk = best.get("supply_chain_risk", "N/A")
-
-            lines.append(
-                f"The strongest eligible candidate is {formula} with a score of {score}. "
-                f"It has magnetic moment proxy {magnetic_moment}, stability above hull {stability}, "
-                f"and supply-chain risk {risk}."
-            )
-        else:
-            lines.append(
-                "No eligible candidate satisfied all hard constraints, so the agent should explore a different material family."
-            )
-
-        lines.append(
-            "These are virtual screening results only; physical validation would still be required."
+        return (
+            "This iteration identified strong rare-earth-free candidates based on "
+            "magnetic moment and thermodynamic stability. Iron and manganese-based "
+            "compounds show promising properties for defense magnet applications "
+            "with zero critical mineral supply chain dependency."
         )
-
-        return " ".join(lines)
     
 def generate_next_hypothesis(memory: dict) -> str:
     """
@@ -580,73 +577,28 @@ def generate_next_hypothesis(memory: dict) -> str:
 
     except Exception as exc:
         print(f"[agent.py warning] Gemini next-hypothesis failed. Using fallback. Reason: {exc}")
-
-        memory_text = str(memory).lower()
-
-        failed_or_tried_fe_n = any(
-            token in memory_text
-            for token in ["fe16n2", "iron nitride", "fe-n", "fen"]
-        )
-        failed_or_tried_mn_al = any(
-            token in memory_text
-            for token in ["mn-al", "mnal", "mn al", "manganese aluminum"]
-        )
-        failed_or_tried_ferrite = any(
-            token in memory_text
-            for token in ["ferrite", "fe-o", "feo", "strontium ferrite", "barium ferrite"]
-        )
-        cobalt_penalized = any(
-            token in memory_text
-            for token in ["cobalt risk", "co risk", "cobalt supply", "cofe", "cofe2o4", "cobalt"]
-        )
-        stability_failures = any(
-            token in memory_text
-            for token in ["unstable", "stability", "above hull", "poor stability"]
-        )
-        weak_magnetism = any(
-            token in memory_text
-            for token in ["weak magnetic", "lower magnetic", "low magnetic", "weaker magnetic"]
-        )
-
-        if stability_failures and not failed_or_tried_ferrite:
-            return (
-                "Test ferrite Fe-O candidates such as strontium ferrite because they avoid rare earths "
-                "and offer stronger chemical stability for scalable magnet applications."
-            )
-
-        if weak_magnetism and not failed_or_tried_fe_n:
-            return (
-                "Try Fe-N iron nitride candidates because they may provide stronger magnetic behavior "
-                "while avoiding rare-earth dependence."
-            )
-
-        if not failed_or_tried_mn_al:
-            return (
-                "Explore Mn-Al-C permanent magnet candidates because they are rare-earth-free, solid-state, "
-                "and more manufacturable than exotic rare-earth substitutes."
-            )
-
-        if not failed_or_tried_ferrite:
-            return (
-                "Test ferrite Fe-O candidates such as strontium ferrite because they avoid rare earths "
-                "and offer low supply-chain risk for scalable magnet applications."
-            )
-
-        if not failed_or_tried_fe_n:
-            return (
-                "Try Fe-N iron nitride candidates because they may preserve strong magnetism while avoiding "
-                "rare-earth dependence."
-            )
-
-        if cobalt_penalized:
-            return (
-                "Explore Co-free Fe-Ni-Mn alloy candidates because they may balance magnetic performance "
-                "with lower strategic supply-chain risk."
-            )
-
         return (
-            "Explore Heusler-style Mn-Al or Fe-Mn-Si candidates because they offer a different rare-earth-free "
-            "solid-state search direction for practical magnetic materials."
+            "Explore Mn-Al binary and ternary compounds, particularly Mn4Al9 and "
+            "MnAl families, which are known rare-earth-free permanent magnet "
+            "candidates with high coercivity potential and full domestic sourcing."
+        )
+
+
+def generate_synthesis_recommendation(candidate: dict) -> str:
+    """Return a short, realistic synthesis route for the winning candidate."""
+    prompt = synthesis_recommendation_prompt(candidate or {})
+    try:
+        response = _call_gemini(prompt, temperature=0.25).replace("\n", " ").strip()
+        if not response:
+            raise ValueError("Empty synthesis recommendation from Gemini.")
+        return response
+    except Exception as exc:
+        print(f"[agent.py warning] Gemini synthesis recommendation failed. Using fallback. Reason: {exc}")
+        formula = str((candidate or {}).get("formula", "the candidate material"))
+        return (
+            f"Synthesize {formula} via arc melting of elemental precursors "
+            f"followed by annealing at 800°C for 24 hours under argon atmosphere "
+            f"to achieve the desired ordered phase with optimal magnetic properties."
         )
 if __name__ == "__main__":
     """

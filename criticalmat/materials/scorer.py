@@ -19,6 +19,8 @@ def score_candidate(candidate: dict, spec: dict) -> int:
     min_magnetic = float(target.get("min_magnetic_moment", 2.0) or 2.0)
     max_formation = float(target.get("max_formation_energy", 0.1) or 0.1)
     max_hull = float(target.get("max_stability_above_hull", 0.05) or 0.05)
+    material_class = str(target.get("material_class", "")).lower()
+    is_magnet_task = ("magnet" in material_class) or bool(target.get("needs_magnetism", False))
 
     # 1) Magnetic contribution (0..40): reward values at/above target.
     magnetic_ratio = magnetic / max(min_magnetic, 1e-6)
@@ -40,6 +42,18 @@ def score_candidate(candidate: dict, spec: dict) -> int:
     baseline_points = 15.0 if magnetic > 0 and hull < 1.0 else 5.0
 
     raw_score = magnetic_points + formation_points + stability_points + baseline_points
+
+    # Practicality adjustments for magnet tasks.
+    family_tag = str(candidate.get("family_tag", ""))
+    elements = set(candidate.get("elements", []) or [])
+    single_element_penalty = 0.0
+    family_bonus = 0.0
+    if is_magnet_task:
+        if len(elements) < 2:
+            single_element_penalty = 30.0
+        if family_tag in {"fe_n", "mn_al", "ferrite", "fe_co"}:
+            family_bonus = 10.0
+        raw_score = raw_score + family_bonus - single_element_penalty
 
     # Supply chain penalty: subtract up to 30 points.
     penalty = 0.30 * _clamp(supply_risk, 0.0, 100.0)
