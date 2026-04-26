@@ -7,6 +7,8 @@ import queue
 import threading
 import io
 import contextlib
+import os
+import re
 from typing import Any
 
 from dotenv import load_dotenv
@@ -36,6 +38,7 @@ STREAM_HEADERS = {
     "Cache-Control": "no-cache",
     "X-Accel-Buffering": "no",
 }
+ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 
 
 class RunRequest(BaseModel):
@@ -44,6 +47,27 @@ class RunRequest(BaseModel):
 
 def _sse_event(name: str, payload: dict[str, Any]) -> str:
     return f"event: {name}\ndata: {json.dumps(payload)}\n\n"
+
+
+def _max_transcript_chars() -> int:
+    try:
+        return max(0, int(os.getenv("CRITICALMAT_SSE_MAX_TRANSCRIPT_CHARS", "12000")))
+    except (TypeError, ValueError):
+        return 12000
+
+
+def _compact_transcript(text: str) -> str:
+    clean = ANSI_ESCAPE_RE.sub("", text or "")
+    max_chars = _max_transcript_chars()
+    if max_chars <= 0 or len(clean) <= max_chars:
+        return clean
+    head = int(max_chars * 0.7)
+    tail = max_chars - head
+    return (
+        clean[:head].rstrip()
+        + "\n\n... [transcript truncated for UI performance] ...\n\n"
+        + clean[-tail:].lstrip()
+    )
 
 
 def _to_camel(value: Any) -> Any:
@@ -71,7 +95,16 @@ def _candidate_to_frontend(candidate: dict[str, Any]) -> dict[str, Any]:
     formula = normalized.get("formula")
     if formula:
         normalized.setdefault("formulaPlain", _formula_plain(formula))
-        normalized.setdefault("fullName", formula)
+        formula_text = str(formula).strip().lower()
+        if formula_text in {"no candidate selected", "none", "n/a"}:
+            fallback_name = (
+                normalized.get("rationale")
+                or normalized.get("mainUncertainty")
+                or "No class-relevant high-confidence candidate met current constraints."
+            )
+            normalized["fullName"] = str(fallback_name)
+        else:
+            normalized.setdefault("fullName", formula)
     if "supplyChainRisk" in normalized:
         risk = normalized["supplyChainRisk"]
         normalized.setdefault("supplyChainScore", max(0, 100 - int(risk or 0)))
@@ -129,6 +162,12 @@ def _get_p2_functions():
 
 def _run_agent_streaming(hypothesis: str, event_queue: queue.Queue) -> None:
     try:
+        def _emit_progress(payload: dict[str, Any]) -> None:
+            event_type = str(payload.get("type", "iteration"))
+            outbound = dict(payload)
+            outbound.pop("type", None)
+            event_queue.put((event_type, outbound))
+
         transcript_buffer = io.StringIO()
         with contextlib.redirect_stdout(transcript_buffer):
             result = run_agent(
@@ -137,8 +176,9 @@ def _run_agent_streaming(hypothesis: str, event_queue: queue.Queue) -> None:
                 use_real_p1=True,
                 use_real_p2=True,
                 allow_mock_fallback=True,
+                event_callback=_emit_progress,
             )
-        terminal_transcript = transcript_buffer.getvalue()
+        terminal_transcript = _compact_transcript(transcript_buffer.getvalue())
         final_candidate = dict(result.get("best_candidate", {}) or {})
         provenance_tree = dict(result.get("provenance_tree", {}) or {})
         candidate_search = dict(provenance_tree.get("candidate_search", {}) or {})
@@ -146,6 +186,7 @@ def _run_agent_streaming(hypothesis: str, event_queue: queue.Queue) -> None:
         ineligible = list(result.get("ineligible", []) or [])
         test_queue = list(result.get("test_queue", []) or [])
         constraints = dict(result.get("constraints", {}) or {})
+        agent_trace = list(result.get("agent_trace", []) or [])
 
         event_queue.put(
             (
@@ -175,6 +216,7 @@ def _run_agent_streaming(hypothesis: str, event_queue: queue.Queue) -> None:
                         "portfolio": portfolio,
                         "ineligible": ineligible,
                         "test_queue": test_queue,
+                        "agent_trace": agent_trace,
                         "provenance_tree": provenance_tree,
                     },
                     "terminalTranscript": terminal_transcript,

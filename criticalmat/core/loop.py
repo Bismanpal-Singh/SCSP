@@ -8,6 +8,10 @@ Hour 3+ integration status:
 
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from typing import Any, Callable
+
 from .memory import AgentMemory
 from . import mocks
 from ..materials.search import apply_hard_filters
@@ -189,7 +193,16 @@ def sort_eligible_candidates(candidates: list[dict], spec: dict) -> list[dict]:
 
 def choose_final_winner(memory_or_result: dict, portfolio: list[dict], source_candidates: list[dict] | None = None) -> dict:
     if portfolio:
-        top = dict(portfolio[0] or {})
+        top = {}
+        for entry in portfolio:
+            candidate = dict(entry or {})
+            formula = str(candidate.get("formula", candidate.get("candidate", "")) or "").strip().lower()
+            if formula in {"", "no candidate selected", "none", "n/a"}:
+                continue
+            top = candidate
+            break
+        if not top:
+            top = dict(portfolio[0] or {})
         candidate_name = str(top.get("candidate", top.get("formula", "")) or "").strip()
         if candidate_name and not top.get("formula"):
             top["formula"] = candidate_name
@@ -232,7 +245,8 @@ def _load_p2_functions():
     generate_next_fn = getattr(p2_agent, "generate_next_hypothesis", None)
     synthesis_fn = getattr(p2_agent, "generate_synthesis_recommendation", None)
     portfolio_fn = getattr(p2_agent, "generate_lab_ready_portfolio", None)
-    return parse_fn, interpret_fn, generate_next_fn, synthesis_fn, portfolio_fn
+    decide_fn = getattr(p2_agent, "decide_next_action", None)
+    return parse_fn, interpret_fn, generate_next_fn, synthesis_fn, portfolio_fn, decide_fn
 
 
 def _latest_portfolio(memory_dict: dict) -> dict:
@@ -242,12 +256,67 @@ def _latest_portfolio(memory_dict: dict) -> dict:
     return dict(history[-1] or {})
 
 
+def _agentic_enabled() -> bool:
+    return os.getenv("CRITICALMAT_AGENTIC_WORKFLOW", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _as_int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _fallback_action(iteration: int, best_scores: list[int], top_score: int, max_iterations: int) -> dict[str, Any]:
+    if iteration >= max_iterations:
+        return {"action": "stop", "rationale": "Reached max iterations; finalizing result."}
+    if len(best_scores) >= 3 and best_scores[-1] <= best_scores[-2] <= best_scores[-3]:
+        return {"action": "stop", "rationale": "Score plateau detected across iterations."}
+    if top_score < 60:
+        return {"action": "retrieve_more", "rationale": "Top score remains low; expand retrieval scope once."}
+    return {"action": "refine_direction", "rationale": "Refine direction for next iteration."}
+
+
+def _normalize_action_payload(payload: Any, fallback: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return dict(fallback)
+    action = str(payload.get("action", "") or "").strip().lower()
+    if action not in {"retrieve_more", "refine_direction", "stop"}:
+        action = str(fallback.get("action", "refine_direction"))
+    rationale = str(payload.get("rationale", "") or fallback.get("rationale", "No rationale provided by planner.")).strip()
+    next_hint = payload.get("next_hypothesis")
+    next_hypothesis = str(next_hint).strip() if isinstance(next_hint, str) and str(next_hint).strip() else None
+    return {"action": action, "rationale": rationale, "next_hypothesis": next_hypothesis}
+
+
+def _decide_with_timeout(
+    decision_fn: Callable[..., dict] | None,
+    *,
+    fallback: dict[str, Any],
+    timeout_s: int,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    if not callable(decision_fn):
+        return dict(fallback)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(decision_fn, **kwargs)
+            return _normalize_action_payload(future.result(timeout=max(1, timeout_s)), fallback)
+    except FutureTimeoutError:
+        timed_out = dict(fallback)
+        timed_out["rationale"] = f"{timed_out.get('rationale', '')} Decision call timed out; fallback used.".strip()
+        return timed_out
+    except Exception:
+        return dict(fallback)
+
+
 def run_agent(
     hypothesis: str,
     max_iterations: int = 5,
     use_real_p1: bool = True,
     use_real_p2: bool = True,
-    allow_mock_fallback: bool = True,
+    allow_mock_fallback: bool = False,
+    event_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict:
     """Run iterative search/scoring/reasoning loop."""
     memory = AgentMemory()
@@ -255,11 +324,16 @@ def run_agent(
     best_scores: list[int] = []
     scored_candidates: list[dict] = []
     convergence_score_threshold = 95
-    min_iterations_before_stop = 2
     p2_synthesis_fn = None
     p2_portfolio_fn = None
+    p2_decide_fn = None
     latest_spec: dict = {}
     original_spec: dict | None = None
+    agent_trace: list[dict[str, Any]] = []
+    retrieval_budget = _as_int_env("CRITICALMAT_AGENTIC_RETRIEVE_BUDGET", 1)
+    retrieval_used = 0
+    decision_timeout_s = _as_int_env("CRITICALMAT_AGENTIC_DECISION_TIMEOUT_S", 4)
+    agentic_active = _agentic_enabled()
 
     print_header(current_hypothesis)
     for iteration in range(1, max_iterations + 1):
@@ -269,7 +343,7 @@ def run_agent(
         p2_portfolio_fn = getattr(mocks, "generate_lab_ready_portfolio", None)
         if use_real_p2:
             try:
-                parse_fn, interpret_fn, next_fn, synth_fn, portfolio_fn = _load_p2_functions()
+                parse_fn, interpret_fn, next_fn, synth_fn, portfolio_fn, decide_fn = _load_p2_functions()
                 if callable(parse_fn):
                     p2_parse_fn = parse_fn
                 if callable(interpret_fn):
@@ -280,6 +354,8 @@ def run_agent(
                     p2_synthesis_fn = synth_fn
                 if callable(portfolio_fn):
                     p2_portfolio_fn = portfolio_fn
+                if callable(decide_fn):
+                    p2_decide_fn = decide_fn
                 elif iteration == 1:
                     print_notice("1) P2 next-hypothesis missing; using mock fallback.", style="yellow")
             except Exception as exc:
@@ -395,7 +471,59 @@ def run_agent(
             memory.portfolio_history.append(iteration_portfolio)
             memory.experiment_queue = list(iteration_portfolio.get("test_queue", []) or [])
 
-        if iteration >= min_iterations_before_stop and top_score > convergence_score_threshold:
+        fallback_action = _fallback_action(
+            iteration=iteration,
+            best_scores=best_scores,
+            top_score=int(top_score or 0),
+            max_iterations=max_iterations,
+        )
+        action_payload = (
+            _decide_with_timeout(
+                p2_decide_fn,
+                fallback=fallback_action,
+                timeout_s=decision_timeout_s,
+                memory=memory.to_dict(),
+                spec=spec,
+                iteration=iteration,
+                max_iterations=max_iterations,
+                top_candidates=eligible_top,
+                interpretation=interpretation,
+            )
+            if agentic_active
+            else dict(fallback_action)
+        )
+        if action_payload.get("action") == "retrieve_more" and retrieval_used >= max(0, retrieval_budget):
+            action_payload["action"] = "refine_direction"
+            action_payload["rationale"] = (
+                f"{action_payload.get('rationale', '')} Retrieval budget exhausted; refining direction."
+            ).strip()
+        if action_payload.get("action") == "retrieve_more":
+            retrieval_used += 1
+
+        trace_entry = {
+            "iteration": iteration,
+            "action": action_payload.get("action", "refine_direction"),
+            "rationale": action_payload.get("rationale", ""),
+            "retrieval_triggered": action_payload.get("action") == "retrieve_more",
+            "top_score": int(top_score or 0),
+            "best_formula": str((selected_top or {}).get("formula", "")),
+            "next_hypothesis": action_payload.get("next_hypothesis"),
+        }
+        agent_trace.append(trace_entry)
+        print_status_line(
+            f"Agent step: {trace_entry['action']} (iter {iteration}) - {trace_entry['rationale'] or 'no rationale'}"
+        )
+        if callable(event_callback):
+            try:
+                event_callback({"type": "agent_step", **trace_entry})
+            except Exception:
+                pass
+
+        if action_payload.get("action") == "stop":
+            print_notice("Agent planner requested early stop.", style="green")
+            break
+
+        if top_score > convergence_score_threshold and action_payload.get("action") != "retrieve_more":
             print_notice(f"Converged: best score exceeded {convergence_score_threshold}.", style="green")
             break
         portfolio_entries = list(iteration_portfolio.get("portfolio", []) or [])
@@ -405,10 +533,13 @@ def run_agent(
             for entry in portfolio_entries
             if str(entry.get("status", "")).upper() in {"BACKUP_TEST", "SAFE_FALLBACK"}
         )
-        if has_test_first and backup_count >= 2:
+        portfolio_confident = int(top_score or 0) >= 85 and _has_converged(best_scores)
+        if has_test_first and backup_count >= 2 and (
+            action_payload.get("action") == "stop" or portfolio_confident
+        ):
             print_notice("Converged: portfolio has TEST_FIRST plus two viable backups.", style="green")
             break
-        if iteration >= min_iterations_before_stop and _has_converged(best_scores):
+        if _has_converged(best_scores) and action_payload.get("action") != "retrieve_more":
             print_notice("Converged: score did not improve for two iterations.", style="green")
             break
 
@@ -416,7 +547,11 @@ def run_agent(
         next_memory["original_spec"] = dict(original_spec or latest_spec)
         next_memory["original_material_class"] = get_material_class(original_spec or latest_spec)
         next_memory["original_hypothesis"] = hypothesis
-        current_hypothesis = p2_next_fn(next_memory)
+        planner_next = action_payload.get("next_hypothesis")
+        if isinstance(planner_next, str) and planner_next.strip():
+            current_hypothesis = planner_next.strip()
+        else:
+            current_hypothesis = p2_next_fn(next_memory)
         print_status_line(f"5) Next hypothesis: {current_hypothesis}")
 
     final_memory = memory.to_dict()
@@ -429,7 +564,10 @@ def run_agent(
         if eligible_sorted:
             best_candidate = dict(eligible_sorted[0])
 
-    if best_candidate:
+    best_formula = str((best_candidate or {}).get("formula", "") or "").strip().lower()
+    placeholder_candidate = best_formula in {"", "no candidate selected", "none", "n/a"}
+
+    if best_candidate and not placeholder_candidate:
         synthesis = None
         if callable(p2_synthesis_fn):
             synthesis = p2_synthesis_fn(best_candidate)
@@ -440,6 +578,10 @@ def run_agent(
             )
         best_candidate["synthesis_recommendation"] = synthesis
         print_final_result(best_candidate, latest_spec)
+    elif best_candidate:
+        best_candidate["synthesis_recommendation"] = (
+            "No synthesis recommendation generated because no class-relevant candidate met confidence/eligibility thresholds."
+        )
 
     ineligible_entries = list(final_memory.get("ineligible_candidates", []))
     test_queue = list(final_memory.get("experiment_queue", []))
@@ -478,6 +620,7 @@ def run_agent(
             "test_queue": test_queue,
         },
         "best_candidate": best_candidate,
+        "agent_trace": agent_trace,
     }
 
     print_ineligible_panel(final_result.get("ineligible", []))

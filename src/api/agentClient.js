@@ -65,6 +65,8 @@ async function parseSseStream(body, callbacks, signal) {
     const type = payload.type || eventName
     if (type === 'iteration') {
       callbacks.onIteration?.(payload)
+    } else if (type === 'agent_step') {
+      callbacks.onAgentStep?.(payload)
     } else if (type === 'complete') {
       const decisionLog = payload.decisionLog || {}
       callbacks.onComplete?.({

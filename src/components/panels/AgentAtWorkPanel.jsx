@@ -4,8 +4,8 @@ import Button from '../Button'
 import NarrationLine from './AgentAtWorkPanel/NarrationLine'
 import { narrateFinal, narrateIteration, narrationTone } from './AgentAtWorkPanel/narrate'
 
-const TYPE_DELAY_MS = 30
-const MAX_VISIBLE_LINES = 6
+const LINE_REVEAL_DELAY_MS = 120
+const MAX_VISIBLE_LINES = 80
 
 function buildScript(iterations, finalCandidate) {
   const lines = [
@@ -22,9 +22,11 @@ function buildScript(iterations, finalCandidate) {
   ]
 
   iterations.forEach((iteration, index) => {
+    const iterId = String(iteration?.num ?? iteration?.iteration ?? index + 1)
     narrateIteration(iteration, index === 0, iterations[index - 1]).forEach((text, lineIndex) => {
+      if (!text) return
       lines.push({
-        id: `iter-${iteration.num}-${lineIndex}`,
+        id: `iter-${iterId}-${lineIndex}`,
         text,
         tone: narrationTone(text),
       })
@@ -71,7 +73,7 @@ function EmptyState() {
   )
 }
 
-function ResultsCard({ finalCandidate, onViewReasoning, onViewResults }) {
+function ResultsCard({ finalCandidate, onViewReasoning, onViewResults, onToggleLogs, showLogs }) {
   return (
     <motion.div
       key="results"
@@ -108,17 +110,25 @@ function ResultsCard({ finalCandidate, onViewReasoning, onViewResults }) {
           </p>
         </div>
 
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          <Button onClick={onViewResults} size="sm">
-            View Full Results →
-          </Button>
+        <div className="mt-5 flex items-center gap-3 overflow-x-auto whitespace-nowrap">
           <button
             type="button"
-            onClick={onViewReasoning}
-            className="text-sm font-medium text-cyan-200/80 transition hover:text-cyan-100"
+            onClick={onToggleLogs}
+            className={[
+              'inline-flex items-center rounded-md border px-3 py-2 text-sm font-semibold transition',
+              showLogs
+                ? 'border-violet-300/50 bg-violet-300/20 text-violet-100'
+                : 'border-violet-300/35 bg-violet-300/[0.1] text-violet-200 hover:bg-violet-300/[0.18]',
+            ].join(' ')}
           >
-            See agent&apos;s reasoning →
+            {showLogs ? 'Hide agent logs' : 'Agent logs'}
           </button>
+          <Button onClick={onViewResults} size="sm">
+            Full Result
+          </Button>
+          <Button onClick={onViewReasoning} size="sm" variant="secondary">
+            Decision Tree
+          </Button>
         </div>
       </div>
     </motion.div>
@@ -135,8 +145,15 @@ export default function AgentAtWorkPanel({
   const [visibleLines, setVisibleLines] = useState([])
   const [completedLineIds, setCompletedLineIds] = useState(new Set())
   const [scriptCursor, setScriptCursor] = useState(0)
+  const [showLogs, setShowLogs] = useState(false)
   const script = useMemo(() => buildScript(iterations, finalCandidate), [iterations, finalCandidate])
   const isComplete = Boolean(finalCandidate) && !isRunning
+
+  useEffect(() => {
+    if (isRunning) {
+      setShowLogs(false)
+    }
+  }, [isRunning])
 
   useEffect(() => {
     if (script.length === 0) {
@@ -169,18 +186,6 @@ export default function AgentAtWorkPanel({
     const active = visibleLines[visibleLines.length - 1]
     if (!active) return undefined
 
-    if (active.divider) {
-      if (scriptCursor < script.length) {
-        const id = window.setTimeout(() => {
-          setCompletedLineIds((ids) => new Set(ids).add(active.id))
-          setVisibleLines((lines) => [...lines, { ...script[scriptCursor], renderedText: '' }].slice(-MAX_VISIBLE_LINES))
-          setScriptCursor((cursor) => cursor + 1)
-        }, 250)
-        return () => window.clearTimeout(id)
-      }
-      return undefined
-    }
-
     if (active.renderedText.length < active.text.length) {
       const id = window.setTimeout(() => {
         setVisibleLines((lines) => {
@@ -188,11 +193,11 @@ export default function AgentAtWorkPanel({
           const last = next[next.length - 1]
           next[next.length - 1] = {
             ...last,
-            renderedText: last.text.slice(0, last.renderedText.length + 1),
+            renderedText: last.text,
           }
           return next
         })
-      }, TYPE_DELAY_MS)
+      }, LINE_REVEAL_DELAY_MS)
       return () => window.clearTimeout(id)
     }
 
@@ -201,7 +206,7 @@ export default function AgentAtWorkPanel({
         setCompletedLineIds((ids) => new Set(ids).add(active.id))
         setVisibleLines((lines) => [...lines, { ...script[scriptCursor], renderedText: '' }].slice(-MAX_VISIBLE_LINES))
         setScriptCursor((cursor) => cursor + 1)
-      }, 450)
+      }, LINE_REVEAL_DELAY_MS)
       return () => window.clearTimeout(id)
     }
 
@@ -211,14 +216,16 @@ export default function AgentAtWorkPanel({
 
   return (
     <div className="w-full space-y-5 text-left">
-      <div className="mb-3">
-        <div>
-          <p className="text-sm font-semibold text-white/86">Agent at Work</p>
-          <p className="mt-0.5 text-xs text-white/38">A plain-English narration of the search as it runs.</p>
+      {!isComplete && (
+        <div className="mb-3">
+          <div>
+            <p className="text-sm font-semibold text-white/86">Agent at Work</p>
+            <p className="mt-0.5 text-xs text-white/38">A plain-English narration of the search as it runs.</p>
+          </div>
         </div>
-      </div>
+      )}
 
-      <section className="relative max-h-[60vh] min-h-[280px] overflow-y-auto rounded-2xl border border-white/10 bg-[var(--surface)] px-8 py-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+      <section className="relative max-h-[60vh] min-h-[280px] overflow-y-auto rounded-2xl border border-white/10 bg-[var(--surface)] px-8 pb-7 pt-14 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
         <span
           className={[
             'absolute right-4 top-4 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors',
@@ -233,12 +240,22 @@ export default function AgentAtWorkPanel({
           {isComplete ? 'Search complete' : 'Agent running'}
         </span>
         <AnimatePresence mode="wait" initial={false}>
-          {isComplete && finalCandidate ? (
-            <ResultsCard
-              finalCandidate={finalCandidate}
-              onViewReasoning={onViewReasoning}
-              onViewResults={onViewResults}
-            />
+          {isComplete && finalCandidate && !showLogs ? (
+            <motion.div
+              key="complete-card"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.25 }}
+            >
+              <ResultsCard
+                finalCandidate={finalCandidate}
+                onViewReasoning={onViewReasoning}
+                onViewResults={onViewResults}
+                onToggleLogs={() => setShowLogs((current) => !current)}
+                showLogs={showLogs}
+              />
+            </motion.div>
           ) : script.length === 0 ? (
             <motion.div
               key="empty"
@@ -269,6 +286,20 @@ export default function AgentAtWorkPanel({
                   />
                 ))}
               </AnimatePresence>
+              {isComplete && finalCandidate && showLogs && (
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-violet-300/25 bg-violet-300/[0.06] px-3 py-2 text-xs text-violet-100/90">
+                  <p>
+                    Agent logs are visible. Return to the match card when you are done reviewing this trace.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowLogs(false)}
+                    className="inline-flex items-center rounded-md border border-violet-300/35 bg-violet-300/[0.12] px-2.5 py-1.5 text-xs font-semibold text-violet-100 transition hover:bg-violet-300/[0.2]"
+                  >
+                    Back to result
+                  </button>
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>

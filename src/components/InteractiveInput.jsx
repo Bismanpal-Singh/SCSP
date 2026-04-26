@@ -42,6 +42,7 @@ export default function InteractiveInput({ useMock = false }) {
   const [phase, setPhase] = useState('input')
   const [value, setValue] = useState('')
   const [submittedQuery, setSubmittedQuery] = useState('')
+  const [baseQuery, setBaseQuery] = useState('')
   const [iterations, setIterations] = useState([])
   const [finalCandidate, setFinalCandidate] = useState(null)
   const [decisionLog, setDecisionLog] = useState([])
@@ -121,11 +122,41 @@ export default function InteractiveInput({ useMock = false }) {
   const startRealRun = useCallback((query) => {
     runRef.current = runAgent(query, {
       onIteration: (iteration) => {
-        setIterations((items) => [...items, iteration])
+        setIterations((items) => {
+          const num = Number(iteration?.num || items.length + 1)
+          const index = items.findIndex((entry) => Number(entry?.num || -1) === num)
+          if (index >= 0) {
+            const next = [...items]
+            next[index] = { ...next[index], ...iteration }
+            return next
+          }
+          return [...items, iteration]
+        })
+      },
+      onAgentStep: (step) => {
+        setIterations((items) => {
+          const num = Number(step?.iteration || items.length + 1)
+          const patch = {
+            num,
+            status: step?.action || 'agent_step',
+            interpretation: step?.rationale || '',
+            action: step?.action || 'refine_direction',
+            retrievalTriggered: Boolean(step?.retrieval_triggered),
+            nextHypothesis: step?.next_hypothesis || null,
+          }
+          const index = items.findIndex((entry) => Number(entry?.num || -1) === num)
+          if (index >= 0) {
+            const next = [...items]
+            next[index] = { ...next[index], ...patch }
+            return next
+          }
+          return [...items, patch]
+        })
       },
       onComplete: (result) => {
         setFinalCandidate(result?.finalCandidate || null)
-        setDecisionLog(Array.isArray(result?.decisionLog) ? result.decisionLog : [])
+        const trace = result?.decisionLog?.agent_trace
+        setDecisionLog(Array.isArray(trace) ? trace : [])
         setPortfolio(result?.portfolio || [])
         setIneligible(result?.ineligible || [])
         setTestQueue(result?.testQueue || [])
@@ -167,6 +198,13 @@ export default function InteractiveInput({ useMock = false }) {
     }
   }, [startMockRun, startRealRun, stopInFlightRun, useMock])
 
+  const isFormulaLike = useCallback((text) => {
+    const value = String(text || '').trim()
+    if (!value || value.length > 32) return false
+    if (/\s/.test(value)) return false
+    return /^[A-Za-z0-9().+\-]+$/.test(value)
+  }, [])
+
   function handleSubmit() {
     if (isRunning) return
     if (!expanded) return
@@ -175,6 +213,7 @@ export default function InteractiveInput({ useMock = false }) {
       return
     }
     const query = value.trim()
+    setBaseQuery(query)
     startRun(query)
   }
 
@@ -182,6 +221,7 @@ export default function InteractiveInput({ useMock = false }) {
     stopInFlightRun()
     setValue('')
     setSubmittedQuery('')
+    setBaseQuery('')
     setIterations([])
     setFinalCandidate(null)
     setDecisionLog([])
@@ -201,6 +241,26 @@ export default function InteractiveInput({ useMock = false }) {
     if (!submittedQuery) return
     startRun(submittedQuery)
   }
+
+  const handleFollowUp = useCallback((kind, extraInput = '') => {
+    if ((!submittedQuery && !baseQuery) || isRunning) return
+    const sourceQuery = String(baseQuery || submittedQuery || '').trim()
+    if (!sourceQuery) return
+    const winnerHint = isFormulaLike(finalCandidate?.formula)
+      ? ` Previous winner: ${String(finalCandidate.formula).trim()}.`
+      : ''
+    if (kind === 'another_direction') {
+      const nextQuery = `${sourceQuery}\nFollow-up: Explore another direction, avoid repeating the same dominant material family, and exclude the previous winning formula.${winnerHint}`
+      startRun(nextQuery)
+      return
+    }
+    if (kind === 'what_if') {
+      const trimmed = String(extraInput || '').trim()
+      if (!trimmed) return
+      const nextQuery = `${sourceQuery}\nWhat-if constraint: ${trimmed}.${winnerHint}`
+      startRun(nextQuery)
+    }
+  }, [submittedQuery, baseQuery, isRunning, finalCandidate, startRun, isFormulaLike])
 
   function handleKeyDown(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -234,6 +294,7 @@ export default function InteractiveInput({ useMock = false }) {
         mockDecisionTree={useMock ? mockDecisionTree : null}
         onReset={handleReset}
         onRetry={handleRetry}
+        onFollowUp={handleFollowUp}
         onTabChange={setActiveTab}
         query={submittedQuery}
         terminalTranscript={terminalTranscript}
@@ -321,6 +382,7 @@ function ResultsSurface({
   mockDecisionTree,
   onReset,
   onRetry,
+  onFollowUp,
   onTabChange,
   portfolio,
   provenanceTree,
@@ -328,6 +390,13 @@ function ResultsSurface({
   terminalTranscript,
   testQueue,
 }) {
+  const [whatIfInput, setWhatIfInput] = useState('')
+  const excludedFormulas = Array.isArray(constraints?.target_props?.exclude_formulas)
+    ? constraints.target_props.exclude_formulas
+    : Array.isArray(constraints?.targetProps?.excludeFormulas)
+      ? constraints.targetProps.excludeFormulas
+      : []
+
   return (
     <div className="mx-auto w-full max-w-[1440px] px-4 opacity-0 animate-fade-in sm:px-8">
       <div className="overflow-hidden rounded-2xl border border-violet-500/20 bg-[#050509]/90 shadow-[0_0_44px_rgba(139,92,246,0.12),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-xl">
@@ -337,6 +406,24 @@ function ResultsSurface({
               Mantle AI Agent
             </p>
             <p className="mt-1 max-w-2xl text-sm text-white/65">&ldquo;{query}&rdquo;</p>
+            {excludedFormulas.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-amber-300/35 bg-amber-300/[0.12] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-amber-100/90">
+                  Excluded formula{excludedFormulas.length > 1 ? 's' : ''}
+                </span>
+                {excludedFormulas.slice(0, 3).map((formula) => (
+                  <span
+                    key={formula}
+                    className="rounded-full border border-white/15 bg-black/20 px-2.5 py-1 font-mono text-[11px] text-white/80"
+                  >
+                    {formula}
+                  </span>
+                ))}
+                {excludedFormulas.length > 3 && (
+                  <span className="text-[11px] text-white/50">+{excludedFormulas.length - 3} more</span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -352,6 +439,37 @@ function ResultsSurface({
               </Button>
             </div>
           </div>
+
+          {!isRunning && finalCandidate && (
+            <div className="mb-4 rounded-lg border border-cyan-400/20 bg-cyan-500/[0.04] p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onFollowUp?.('another_direction')}
+                  className="rounded-md border border-cyan-300/30 px-3 py-1.5 text-xs font-semibold text-cyan-100/90 transition hover:bg-cyan-300/10"
+                >
+                  Look for another direction
+                </button>
+                <input
+                  type="text"
+                  value={whatIfInput}
+                  onChange={(event) => setWhatIfInput(event.target.value)}
+                  placeholder="What if I need X..."
+                  className="min-w-[220px] flex-1 rounded-md border border-white/15 bg-black/20 px-3 py-1.5 text-xs text-white/90 placeholder-white/40 outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    onFollowUp?.('what_if', whatIfInput)
+                    setWhatIfInput('')
+                  }}
+                  className="rounded-md border border-violet-300/30 px-3 py-1.5 text-xs font-semibold text-violet-100/90 transition hover:bg-violet-300/10"
+                >
+                  Run What-if
+                </button>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rose-500/25 bg-rose-500/[0.08] p-3 text-left">

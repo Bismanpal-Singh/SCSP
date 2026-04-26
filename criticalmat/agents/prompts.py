@@ -367,10 +367,83 @@ Class-specific constraints:
 - general/unknown:
   - Use practical broad scoring and realistic validation experiments.
 
-- If no plausible high-confidence candidate exists, return a truthful portfolio item that says:
-  "No high-confidence candidate found; broaden search to <relevant families>"
-  with status EXPLORE_LATER.
+- If no plausible high-confidence candidate exists:
+  - Return the best observed candidates (if any) as EXPLORE_LATER.
+  - Explain why confidence is insufficient using concrete evidence (score, stability, supply risk, class mismatch, or constraints).
+  - If nothing usable was retrieved, return one truthful EXPLORE_LATER item with explicit failure reason.
+  - Do not repeat stock phrases verbatim across runs.
 - Use cautious wording: "promising computational candidate", "candidate for further screening", "requires physical validation".
 - Do not call any candidate proven, field-ready, or suitable for a defense platform.
 - No markdown and no extra keys.
+"""
+
+
+def decide_next_action_prompt(
+    memory: dict,
+    spec: dict,
+    iteration: int,
+    max_iterations: int,
+    top_candidates: list[dict],
+    interpretation: str,
+) -> str:
+    """Prompt for constrained agentic action selection."""
+    return f"""
+You are CriticalMat's constrained planner.
+
+You must choose exactly one next action for this iteration.
+
+Iteration: {iteration}
+Max iterations: {max_iterations}
+Spec: {json.dumps(spec, indent=2)}
+Top eligible candidates: {json.dumps(top_candidates[:5], indent=2)}
+Interpretation: {interpretation}
+Memory snapshot: {json.dumps(memory, indent=2)}
+
+Return ONLY valid JSON with exactly this schema:
+{{
+  "action": "retrieve_more|refine_direction|stop",
+  "rationale": "one short sentence",
+  "next_hypothesis": "optional one-sentence next direction"
+}}
+
+Rules:
+- retrieve_more: choose only when evidence is weak, low-scoring, or too narrow and another retrieval pass is justified.
+- refine_direction: choose when a new composition direction should be explored next iteration.
+- stop: choose when confidence is sufficient or convergence is clear.
+- Never bypass banned/safety constraints.
+- Keep rationale factual and concise.
+- If action is stop, next_hypothesis may be empty.
+- Do not include markdown, code fences, or extra keys.
+"""
+
+
+def followup_constraints_prompt(followup_text: str) -> str:
+    """Prompt for robust natural-language follow-up constraint parsing."""
+    return f"""
+You are a constraint parser for CriticalMat.
+
+Task:
+Convert follow-up user text into strict JSON constraints for materials search.
+
+Input:
+\"\"\"{followup_text}\"\"\"
+
+Return ONLY valid JSON with this exact schema:
+{{
+  "include_families": ["..."],
+  "exclude_families": ["..."],
+  "exclude_formulas": ["Mn4Al9"],
+  "add_elements": ["Fe", "Mn"],
+  "ban_elements": ["Co", "Nd"],
+  "notes": "optional short interpretation"
+}}
+
+Rules:
+- Use short normalized family tokens when possible (examples: oxide, sulfide, phosphate, spinel, layered, olivine, ferrite, mn-al, mn-al-c, fe-n, nitride, carbide, boride, silicide, refractory, ceramic, intermetallic).
+- If user says "don't need", "avoid", "exclude", "without", treat as exclusion.
+- If user explicitly excludes a specific composition (example: "not Mn4Al9 again"), add it to exclude_formulas.
+- If user says "allow", "include", "add", treat as inclusion.
+- Normalize element names to symbols (cobalt->Co, neodymium->Nd, iron->Fe, etc.).
+- Preserve only clear intent; if uncertain, leave arrays empty rather than guessing.
+- No markdown, no explanations outside JSON.
 """

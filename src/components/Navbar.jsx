@@ -34,17 +34,13 @@ export default function Navbar() {
   const currentHash = typeof window === 'undefined' ? '#/' : window.location.hash || '#/'
 
   return (
-    <header className="sticky top-0 z-30 border-b border-white/[0.06] bg-[#0a0a0f]/70 backdrop-blur-xl">
-      <div
-        className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-violet-500/35 to-transparent shadow-[0_0_20px_rgba(139,92,246,0.25)]"
-        aria-hidden
-      />
+    <header className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0a0f]">
       <div className="relative mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:h-16 sm:px-6 lg:px-8">
         <a
           href="#/"
           className="group flex items-center gap-3 text-white no-underline transition-opacity hover:opacity-95"
         >
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] shadow-[0_0_24px_rgba(139,92,246,0.12)] ring-1 ring-violet-500/20 transition group-hover:border-violet-500/30 group-hover:shadow-[0_0_28px_rgba(139,92,246,0.2)]">
+          <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.03]">
             <LogoMark />
           </span>
           <span className="font-semibold tracking-tight text-white/95">Mantle AI</span>
@@ -57,7 +53,7 @@ export default function Navbar() {
               className={[
                 'text-sm font-medium transition-colors hover:text-violet-300',
                 currentHash === item.href
-                  ? 'text-violet-300 drop-shadow-[0_0_10px_rgba(139,92,246,0.35)]'
+                  ? 'text-violet-300'
                   : 'text-white/55',
               ].join(' ')}
             >

@@ -24,7 +24,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 source .venv/bin/activate
-python -m uvicorn criticalmat.server:app --host localhost --port 8000 &
+python -m uvicorn criticalmat.server:app --host localhost --port 8000 --reload --reload-dir criticalmat &
 BACKEND_PID=$!
 
 npm run dev:frontend &

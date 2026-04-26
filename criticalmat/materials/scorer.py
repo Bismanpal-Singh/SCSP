@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from criticalmat.core.policy import get_policy
+
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
@@ -11,6 +13,7 @@ def _compute_score_components(candidate: dict, spec: dict) -> dict:
     """Compute 2.0 weighted score and breakdown components."""
     target = dict(spec.get("target_props", {}) or {})
     material_class = str(target.get("material_class", "unknown")).lower()
+    policy = get_policy({"target_props": target})
 
     magnetic_moment = float(candidate.get("magnetic_moment", 0.0) or 0.0)
     band_gap = candidate.get("band_gap")
@@ -70,11 +73,11 @@ def _compute_score_components(candidate: dict, spec: dict) -> dict:
     evidence_confidence_score = _clamp(evidence_confidence_score, 0.0, 100.0)
 
     overall = (
-        0.30 * scientific_fit
-        + 0.20 * stability_score
-        + 0.20 * supply_chain_safety
-        + 0.15 * manufacturability_score
-        + 0.15 * evidence_confidence_score
+        float(policy.w_scientific_fit) * scientific_fit
+        + float(policy.w_stability) * stability_score
+        + float(policy.w_supply_chain) * supply_chain_safety
+        + float(policy.w_manufacturability) * manufacturability_score
+        + float(policy.w_evidence) * evidence_confidence_score
     )
     final_score = int(min(100, max(0, overall)))
 

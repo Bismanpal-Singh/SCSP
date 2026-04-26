@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections import defaultdict
 from itertools import combinations
 from typing import Any
@@ -14,6 +15,7 @@ from dotenv import load_dotenv
 from mp_api.client import MPRester
 
 from criticalmat.materials.scorer import score_candidate
+from criticalmat.core.policy import get_policy
 
 # Two-stage "virtual screening": fetch many MP summaries, rank locally, return top `limit`.
 SCREEN_FETCH_DEFAULT = 100
@@ -44,6 +46,10 @@ RADIOACTIVE_TOXIC_ELEMENTS = {
 # Single-element phases that are gaseous (or impractical as solids) near ambient conditions.
 NON_SOLID_SINGLE_ELEMENTS = {"H", "He", "N", "O", "F", "Ne", "Cl", "Ar", "Kr", "Xe", "Rn"}
 
+HEURISTIC_WEIGHT_DEFAULT = 0.45
+HEURISTIC_CAP_DEFAULT = 10
+HEURISTIC_MARGIN_DEFAULT = 8
+
 
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
@@ -60,6 +66,27 @@ def _to_bool(value: Any, default: bool = False) -> bool:
     if value is None:
         return default
     return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _to_int(value: Any, default: int) -> int:
+    try:
+        if value is None:
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _heuristic_tuning() -> tuple[float, int, int]:
+    """Read ranking heuristic tuning from env with safe defaults."""
+    weight = _to_float(os.getenv("CRITICALMAT_HEURISTIC_WEIGHT"), HEURISTIC_WEIGHT_DEFAULT)
+    cap = _to_int(os.getenv("CRITICALMAT_HEURISTIC_CAP"), HEURISTIC_CAP_DEFAULT)
+    margin = _to_int(os.getenv("CRITICALMAT_HEURISTIC_MARGIN"), HEURISTIC_MARGIN_DEFAULT)
+    return (
+        max(0.0, min(weight, 1.0)),
+        max(0, cap),
+        max(0, margin),
+    )
 
 
 def _doc_get(doc: Any, key: str, default: Any = None) -> Any:
@@ -230,7 +257,51 @@ def _is_pure_element(candidate: dict) -> bool:
     return len(set(candidate.get("elements", []) or [])) <= 1
 
 
+def _normalize_family_token(text: str) -> str:
+    token = str(text or "").strip().lower().replace("_", "-")
+    alias_map = {
+        "mn al": "mn-al",
+        "mnal": "mn-al",
+        "mn-al-c": "mn-al-c",
+        "mn al c": "mn-al-c",
+        "fe n": "fe-n",
+        "iron nitride": "fe-n",
+        "ferrites": "ferrite",
+        "oxides": "oxide",
+        "sulfides": "sulfide",
+        "phosphates": "phosphate",
+    }
+    return alias_map.get(token, token)
+
+
+def _normalize_formula_token(text: str) -> str:
+    subscript_digits = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
+    normalized = str(text or "").translate(subscript_digits).strip().lower()
+    return re.sub(r"[^a-z0-9]", "", normalized)
+
+
+def _family_constraints_allow(candidate: dict, target_props: dict | None) -> bool:
+    props = target_props or {}
+    include_families = [_normalize_family_token(x) for x in (props.get("include_families", []) or [])]
+    exclude_families = [_normalize_family_token(x) for x in (props.get("exclude_families", []) or [])]
+    exclude_formulas = [_normalize_formula_token(x) for x in (props.get("exclude_formulas", []) or [])]
+    family = _normalize_family_token(str(candidate.get("material_family", "") or ""))
+    formula = _normalize_family_token(str(candidate.get("formula", "") or ""))
+    formula_plain = _normalize_formula_token(str(candidate.get("formula", "") or ""))
+
+    if exclude_families and any(token and (token in family or token in formula) for token in exclude_families):
+        return False
+    if exclude_formulas and any(token and token == formula_plain for token in exclude_formulas):
+        return False
+    if include_families:
+        return any(token and (token in family or token in formula) for token in include_families)
+    return True
+
+
 def _is_class_relevant_candidate(candidate: dict, target_props: dict | None) -> bool:
+    if not _family_constraints_allow(candidate, target_props):
+        return False
+
     material_class = _material_class(target_props)
     elements = set(candidate.get("elements", []) or [])
     formula = str(candidate.get("formula", "") or "").lower()
@@ -246,10 +317,11 @@ def _is_class_relevant_candidate(candidate: dict, target_props: dict | None) -> 
     if material_class == "battery_material":
         if is_pure:
             return False
-        return any(
+        family_ok = any(
             token in formula or token in family
             for token in ("li", "na", "mn", "fe", "po4", "oxide", "phosphate", "sulfide")
         )
+        return family_ok
 
     if material_class == "protective_coating":
         if is_pure or formula in {"s", "s8", "ce"}:
@@ -278,9 +350,11 @@ def _is_class_relevant_candidate(candidate: dict, target_props: dict | None) -> 
 
 def _practicality_rules(target_props: dict | None) -> dict[str, float]:
     props = target_props or {}
+    policy = get_policy({"target_props": props})
     return {
-        "max_stability_above_hull": _to_float(props.get("max_stability_above_hull", 0.12), default=0.12),
-        "min_magnetic_moment": _to_float(props.get("min_magnetic_moment", 0.2), default=0.2),
+        "max_stability_above_hull": _to_float(props.get("max_stability_above_hull", policy.max_stability_above_hull), default=float(policy.max_stability_above_hull)),
+        "min_magnetic_moment": _to_float(props.get("min_magnetic_moment", policy.min_magnetic_moment), default=float(policy.min_magnetic_moment)),
+        "max_element_count_practical": float(getattr(policy, "max_element_count_practical", 6)),
     }
 
 
@@ -308,9 +382,10 @@ def _apply_viability_filters(candidates: list[dict], target_props: dict | None) 
 
     is_magnet_task = _magnet_task(props)
     material_class = _material_class(props)
-    require_solid_state = _to_bool(props.get("require_solid_state", True), default=True)
-    exclude_radioactive = _to_bool(props.get("exclude_radioactive", True), default=True)
-    require_practical_materials = _to_bool(props.get("require_practical_materials", True), default=True)
+    policy = get_policy({"target_props": props})
+    require_solid_state = _to_bool(props.get("require_solid_state", policy.require_solid_state), default=bool(policy.require_solid_state))
+    exclude_radioactive = _to_bool(props.get("exclude_radioactive", policy.exclude_radioactive), default=bool(policy.exclude_radioactive))
+    require_practical_materials = _to_bool(props.get("require_practical_materials", policy.require_practical_materials), default=bool(policy.require_practical_materials))
     require_compound = _to_bool(props.get("require_compound", is_magnet_task), default=is_magnet_task)
     rules = _practicality_rules(props)
 
@@ -346,7 +421,8 @@ def _screen_fetch_limit(target_props: dict | None, final_limit: int) -> int:
     """How many MP rows to pull before local rank-and-truncate (default 100, capped)."""
     final_limit = max(1, final_limit)
     props = target_props or {}
-    raw = props.get("mp_screen_fetch_limit", SCREEN_FETCH_DEFAULT)
+    policy = get_policy({"target_props": props})
+    raw = props.get("mp_screen_fetch_limit", int(policy.mp_screen_fetch_limit))
     try:
         cap = int(raw)
     except (TypeError, ValueError):
@@ -362,10 +438,15 @@ def _rank_candidates(candidates: list[dict], target_props: dict | None) -> list[
     spec = {"target_props": props}
     material_class = _material_class(props)
     preferred = [str(f).strip().lower().replace("_", "-") for f in (props.get("preferred_families", []) or [])]
+    policy = get_policy({"target_props": props})
+    heuristic_weight = float(policy.heuristic_weight)
+    heuristic_cap = int(policy.heuristic_cap)
+    heuristic_margin = int(policy.heuristic_margin)
+    base_scores = [int(score_candidate(dict(candidate), spec)) for candidate in candidates]
+    top_base_score = max(base_scores) if base_scores else 0
     ranked = []
-    for candidate in candidates:
+    for candidate, base_score in zip(candidates, base_scores):
         enriched = dict(candidate)
-        base_score = score_candidate(enriched, spec)
         family_tag = str(enriched.get("material_family", "")).lower().replace("_", "-")
         formula = str(enriched.get("formula", "") or "").lower()
         family_bonus = 0
@@ -394,7 +475,17 @@ def _rank_candidates(candidates: list[dict], target_props: dict | None) -> list[
         elif material_class == "protective_coating":
             if any(token in formula or token in family_tag for token in ("sic", "tio", "al", "ta", "zn", "oxide", "nitride", "carbide")):
                 family_bonus += 20
-        enriched["prelim_score"] = base_score + family_bonus
+        # Keep heuristics as a controlled tie-break, not a dominant score driver.
+        if (top_base_score - base_score) <= heuristic_margin:
+            scaled_bonus = int(round(family_bonus * heuristic_weight))
+            if heuristic_cap > 0:
+                scaled_bonus = max(-heuristic_cap, min(heuristic_cap, scaled_bonus))
+        else:
+            scaled_bonus = 0
+
+        enriched["base_score"] = base_score
+        enriched["heuristic_bonus"] = scaled_bonus
+        enriched["prelim_score"] = base_score + scaled_bonus
         ranked.append(enriched)
     ranked.sort(key=lambda c: c.get("prelim_score", 0), reverse=True)
     return ranked
@@ -467,6 +558,11 @@ def apply_hard_filters(candidates: list[dict], spec: dict) -> tuple[list[dict], 
     target_props = dict((spec or {}).get("target_props", {}) or {})
     material_class = _material_class(target_props)
     banned_elements = set((spec or {}).get("banned_elements", []) or [])
+    excluded_formula_tokens = {
+        _normalize_formula_token(item)
+        for item in (target_props.get("exclude_formulas", []) or [])
+        if _normalize_formula_token(item)
+    }
     exclude_radioactive = bool(
         (spec or {}).get("exclude_radioactive", target_props.get("exclude_radioactive", True))
     )
@@ -477,11 +573,14 @@ def apply_hard_filters(candidates: list[dict], spec: dict) -> tuple[list[dict], 
     for candidate in candidates or []:
         enriched = dict(candidate)
         elements = set(enriched.get("elements", []) or [])
+        formula_token = _normalize_formula_token(enriched.get("formula", ""))
         reasons: list[str] = []
 
         banned_overlap = sorted(elements & banned_elements)
         if banned_overlap:
             reasons.append(f"Contains banned element: {', '.join(banned_overlap)}")
+        if excluded_formula_tokens and formula_token in excluded_formula_tokens:
+            reasons.append("Matches an explicitly excluded previous winner")
 
         radioactive_overlap = sorted(elements & radioactive_elements)
         if exclude_radioactive and radioactive_overlap:

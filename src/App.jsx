@@ -1,6 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
-import BackgroundEffect from './components/BackgroundEffect'
-import IntroLoader from './components/IntroLoader'
+import React, { useEffect } from 'react'
 import Navbar from './components/Navbar'
 import { useHashRoute } from './hooks/useHashRoute'
 import HomePage from './pages/HomePage'
@@ -25,37 +23,14 @@ function resolveView(path) {
 export default function App() {
   const { path } = useHashRoute()
   const view = resolveView(path)
-  const [introPhase, setIntroPhase] = useState('intro')
-  const [showIntro, setShowIntro] = useState(() => path === '/')
-  const revealApp = introPhase === 'shatter' || introPhase === 'complete' || !showIntro
 
   useEffect(() => {
     window.scrollTo(0, 0)
   }, [path])
 
-  useEffect(() => {
-    if (path !== '/') {
-      setShowIntro(false)
-      setIntroPhase('complete')
-    }
-  }, [path])
-
-  const handleIntroComplete = useCallback(() => {
-    setShowIntro(false)
-    setIntroPhase('complete')
-  }, [])
-
   return (
     <div className="relative min-h-screen bg-mantle-bg text-white">
-      <div
-        className="min-h-screen w-full transition-[opacity,filter,transform] duration-700 ease-out"
-        style={{
-          opacity: revealApp ? 1 : 0,
-          filter: revealApp ? 'blur(0px)' : 'blur(8px)',
-          transform: revealApp ? 'scale(1)' : 'scale(0.99)',
-        }}
-      >
-        <BackgroundEffect />
+      <div className="min-h-screen w-full">
         <Navbar />
         <main
           style={{
@@ -72,9 +47,6 @@ export default function App() {
           {view === 'contact' && <ContactPage />}
         </main>
       </div>
-      {showIntro && (
-        <IntroLoader onPhaseChange={setIntroPhase} onComplete={handleIntroComplete} />
-      )}
     </div>
   )
 }

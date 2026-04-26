@@ -29,6 +29,8 @@ from criticalmat.agents.prompts import (
     synthesis_recommendation_prompt,
     lab_ready_potential_prompt,
     lab_ready_portfolio_prompt,
+    decide_next_action_prompt,
+    followup_constraints_prompt,
 )
 
 
@@ -84,6 +86,215 @@ ELEMENT_NAME_TO_SYMBOL = {
     "samarium": "Sm",
     "terbium": "Tb",
 }
+
+_FOLLOWUP_LINE_RE = re.compile(r"^\s*(follow-up|followup|what-?if)\s*[:\-]\s*(.+?)\s*$", flags=re.IGNORECASE)
+_ELEMENT_SYMBOL_RE = re.compile(r"^[A-Z][a-z]?$")
+_FORMULA_TOKEN_RE = re.compile(r"\b(?:[A-Z][a-z]?\d*){2,}\b")
+
+
+def _normalize_followup_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    family_alias = {
+        "oxides": "oxide",
+        "sulfides": "sulfide",
+        "phosphates": "phosphate",
+        "mn al": "mn-al",
+        "mnal": "mn-al",
+        "mn al c": "mn-al-c",
+        "fe n": "fe-n",
+        "iron nitride": "fe-n",
+        "ferrites": "ferrite",
+    }
+
+    def _norm_family(values: Any) -> list[str]:
+        out: list[str] = []
+        if not isinstance(values, list):
+            return out
+        for item in values:
+            token = str(item or "").strip().lower().replace("_", "-")
+            token = family_alias.get(token, token)
+            if token and token not in out:
+                out.append(token)
+        return out
+
+    name_to_symbol = {k.lower(): v for k, v in ELEMENT_NAME_TO_SYMBOL.items()}
+    valid_symbols = {
+        "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne",
+        "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar", "K", "Ca",
+        "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn",
+        "Ga", "Ge", "As", "Se", "Br", "Kr", "Rb", "Sr", "Y", "Zr",
+        "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd", "In", "Sn",
+        "Sb", "Te", "I", "Xe", "Cs", "Ba", "La", "Ce", "Pr", "Nd",
+        "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb",
+        "Lu", "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg",
+        "Tl", "Pb", "Bi", "Po", "At", "Rn", "Fr", "Ra", "Ac", "Th",
+        "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf", "Es", "Fm",
+        "Md", "No", "Lr",
+    }
+
+    def _norm_elements(values: Any) -> list[str]:
+        out: list[str] = []
+        if not isinstance(values, list):
+            return out
+        for item in values:
+            raw = str(item or "").strip()
+            if not raw:
+                continue
+            symbol = raw
+            if not _ELEMENT_SYMBOL_RE.match(raw):
+                symbol = name_to_symbol.get(raw.lower(), "")
+            if symbol in valid_symbols and symbol not in out:
+                out.append(symbol)
+        return out
+
+    return {
+        "include_families": _norm_family(payload.get("include_families", [])),
+        "exclude_families": _norm_family(payload.get("exclude_families", [])),
+        "exclude_formulas": _norm_family(payload.get("exclude_formulas", [])),
+        "add_elements": _norm_elements(payload.get("add_elements", [])),
+        "ban_elements": _norm_elements(payload.get("ban_elements", [])),
+        "notes": str(payload.get("notes", "") or "").strip(),
+    }
+
+
+def _extract_followup_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for raw_line in str(text or "").splitlines():
+        match = _FOLLOWUP_LINE_RE.match(raw_line)
+        if not match:
+            continue
+        payload = str(match.group(2) or "").strip()
+        if payload:
+            lines.append(payload)
+    return lines
+
+
+def _parse_structured_followups_regex(text: str) -> dict[str, Any]:
+    include_families: list[str] = []
+    exclude_families: list[str] = []
+    exclude_formulas: list[str] = []
+    add_elements: list[str] = []
+    ban_elements: list[str] = []
+
+    if not text:
+        return {
+            "include_families": include_families,
+            "exclude_families": exclude_families,
+            "exclude_formulas": exclude_formulas,
+            "add_elements": add_elements,
+            "ban_elements": ban_elements,
+        }
+
+    for raw_line in str(text).splitlines():
+        match = _FOLLOWUP_LINE_RE.match(raw_line)
+        if not match:
+            continue
+        payload = str(match.group(2) or "").strip().lower()
+        if not payload:
+            continue
+
+        family_tokens = {
+            "oxide": "oxide",
+            "oxides": "oxide",
+            "sulfide": "sulfide",
+            "sulfides": "sulfide",
+            "phosphate": "phosphate",
+            "phosphates": "phosphate",
+            "spinel": "spinel",
+            "layered": "layered",
+            "olivine": "olivine",
+            "nitride": "nitride",
+            "carbide": "carbide",
+            "boride": "boride",
+            "silicide": "silicide",
+            "refractory": "refractory",
+            "ceramic": "ceramic",
+            "ferrite": "ferrite",
+            "mn-al": "mn-al",
+            "mn al": "mn-al",
+            "mnal": "mn-al",
+            "mn-al-c": "mn-al-c",
+            "mn al c": "mn-al-c",
+            "fe-n": "fe-n",
+            "fe n": "fe-n",
+            "iron nitride": "fe-n",
+            "intermetallic": "intermetallic",
+        }
+
+        has_negation = any(word in payload for word in ["avoid ", "exclude ", "ban ", "do not ", "don't ", "dont ", "without ", "not need ", "no need "])
+        if any(word in payload for word in ["allow ", "include ", "permit ", "ok ", "okay ", "need ", "want ", "prefer "]) and not has_negation:
+            for k, v in family_tokens.items():
+                if re.search(rf"\b{re.escape(k)}\b", payload):
+                    include_families.append(v)
+        if has_negation:
+            for k, v in family_tokens.items():
+                if re.search(rf"\b{re.escape(k)}\b", payload):
+                    exclude_families.append(v)
+            for formula in _FORMULA_TOKEN_RE.findall(raw_line):
+                exclude_formulas.append(formula)
+
+        if any(word in payload for word in ["add ", "include ", "allow "]):
+            for name, symbol in ELEMENT_NAME_TO_SYMBOL.items():
+                if re.search(rf"\b{name}\b", payload):
+                    add_elements.append(symbol)
+            for symbol in re.findall(r"\b[A-Z][a-z]?\b", raw_line):
+                add_elements.append(symbol)
+        if any(word in payload for word in ["avoid ", "exclude ", "ban ", "without ", "cobalt-free", "cobalt free", "don't ", "dont ", "not need ", "no need "]):
+            for name, symbol in ELEMENT_NAME_TO_SYMBOL.items():
+                if re.search(rf"\b{name}\b", payload):
+                    ban_elements.append(symbol)
+            for symbol in re.findall(r"\b[A-Z][a-z]?\b", raw_line):
+                ban_elements.append(symbol)
+
+    def _dedupe(items: list[str]) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            key = str(item).strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(key)
+        return out
+
+    return {
+        "include_families": _dedupe(include_families),
+        "exclude_families": _dedupe(exclude_families),
+        "exclude_formulas": _dedupe(exclude_formulas),
+        "add_elements": _dedupe(add_elements),
+        "ban_elements": _dedupe(ban_elements),
+    }
+
+
+def _parse_structured_followups(text: str) -> dict[str, Any]:
+    """LLM-first parsing for natural-language follow-ups with regex fallback."""
+    regex_payload = _parse_structured_followups_regex(text)
+    if not text:
+        return regex_payload
+
+    enable_llm_parse = os.getenv("CRITICALMAT_LLM_FOLLOWUP_PARSE", "1").strip().lower() not in {"0", "false", "no", "off"}
+    if not enable_llm_parse:
+        return regex_payload
+
+    lines = _extract_followup_lines(text)
+    if not lines:
+        return regex_payload
+
+    try:
+        parsed = _extract_json(_call_model(followup_constraints_prompt("\n".join(lines)), temperature=0.1))
+        llm_payload = _normalize_followup_payload(parsed)
+    except Exception:
+        return regex_payload
+
+    # Merge LLM + regex (LLM primary, regex as safety net for symbols/aliases).
+    merged = {
+        "include_families": list(dict.fromkeys((llm_payload.get("include_families", []) or []) + (regex_payload.get("include_families", []) or []))),
+        "exclude_families": list(dict.fromkeys((llm_payload.get("exclude_families", []) or []) + (regex_payload.get("exclude_families", []) or []))),
+        "exclude_formulas": list(dict.fromkeys((llm_payload.get("exclude_formulas", []) or []) + (regex_payload.get("exclude_formulas", []) or []))),
+        "add_elements": list(dict.fromkeys((llm_payload.get("add_elements", []) or []) + (regex_payload.get("add_elements", []) or []))),
+        "ban_elements": list(dict.fromkeys((llm_payload.get("ban_elements", []) or []) + (regex_payload.get("ban_elements", []) or []))),
+        "notes": str(llm_payload.get("notes", "") or "").strip(),
+    }
+    return merged
 
 def _get_client() -> genai.Client:
     """
@@ -326,6 +537,24 @@ def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
         if element not in banned_elements:
             banned_elements.append(element)
 
+    followup = _parse_structured_followups(str(context))
+    for element in followup.get("ban_elements", []) or []:
+        if element not in banned_elements:
+            banned_elements.append(element)
+    for element in followup.get("add_elements", []) or []:
+        if element not in allowed_elements:
+            allowed_elements.append(element)
+    # Families are stored in target_props so P1 can bias/filter without hardcoding per use-case.
+    include_families = followup.get("include_families", []) or []
+    exclude_families = followup.get("exclude_families", []) or []
+    exclude_formulas = followup.get("exclude_formulas", []) or []
+    if include_families:
+        target_props["include_families"] = include_families
+    if exclude_families:
+        target_props["exclude_families"] = exclude_families
+    if exclude_formulas:
+        target_props["exclude_formulas"] = [str(item).strip() for item in exclude_formulas if str(item).strip()]
+
     # Remove duplicates while preserving order.
     allowed_elements = list(dict.fromkeys(allowed_elements))
     banned_elements = list(dict.fromkeys(banned_elements))
@@ -504,11 +733,11 @@ def _fallback_parse_hypothesis(text: str) -> dict[str, Any]:
         "avoid_rare_earths": bool(set(banned_elements) & COMMON_RARE_EARTHS),
 
         # New explicit constraints.
-        "exclude_radioactive": exclude_radioactive or True,
-        "require_solid_state": require_solid_state or True,
-        "require_practical_materials": require_practical_materials or True,
-        "require_manufacturable": require_practical_materials or True,
-        "avoid_toxic_elements": avoid_toxic_elements or True,
+        "exclude_radioactive": bool(exclude_radioactive),
+        "require_solid_state": bool(require_solid_state),
+        "require_practical_materials": bool(require_practical_materials),
+        "require_manufacturable": bool(require_practical_materials),
+        "avoid_toxic_elements": bool(avoid_toxic_elements),
         "avoid_precious_metals": False,
         "mp_screen_fetch_limit": 100,
         "preferred_families": preferred_families,
@@ -788,6 +1017,82 @@ def generate_next_hypothesis(memory: dict) -> str:
         )
 
 
+def decide_next_action(
+    memory: dict,
+    spec: dict,
+    iteration: int,
+    max_iterations: int,
+    top_candidates: list[dict],
+    interpretation: str,
+) -> dict:
+    """
+    Decide constrained next action for lightweight agentic workflow.
+
+    Returns:
+    {
+      "action": "retrieve_more" | "refine_direction" | "stop",
+      "rationale": str,
+      "next_hypothesis": str | None
+    }
+    """
+    if iteration >= max_iterations:
+        return {
+            "action": "stop",
+            "rationale": "Reached max iterations; finalizing with best available candidate.",
+            "next_hypothesis": None,
+        }
+
+    best = dict((memory or {}).get("current_best", {}) or {})
+    best_score = int(best.get("score", 0) or 0)
+    if best_score >= 92:
+        return {
+            "action": "stop",
+            "rationale": "Top score is high enough to stop early for demo stability.",
+            "next_hypothesis": None,
+        }
+
+    fallback_next = generate_next_hypothesis(memory or {})
+    heuristic_fallback = {
+        "action": "retrieve_more" if best_score < 60 else "refine_direction",
+        "rationale": (
+            "Best score remains low; run one more retrieval pass."
+            if best_score < 60
+            else "Use a refined direction to improve candidate quality."
+        ),
+        "next_hypothesis": fallback_next,
+    }
+
+    prompt = decide_next_action_prompt(
+        memory=memory or {},
+        spec=spec or {},
+        iteration=iteration,
+        max_iterations=max_iterations,
+        top_candidates=top_candidates or [],
+        interpretation=str(interpretation or ""),
+    )
+    try:
+        parsed = _extract_json(_call_model(prompt, temperature=0.2))
+        action = str(parsed.get("action", "")).strip().lower()
+        if action not in {"retrieve_more", "refine_direction", "stop"}:
+            action = heuristic_fallback["action"]
+        rationale = str(parsed.get("rationale", "")).strip() or heuristic_fallback["rationale"]
+        next_hypothesis = parsed.get("next_hypothesis")
+        if action == "stop":
+            next_hypothesis = None
+        elif not isinstance(next_hypothesis, str) or not next_hypothesis.strip():
+            next_hypothesis = fallback_next
+        else:
+            next_hypothesis = next_hypothesis.strip()
+        return {
+            "action": action,
+            "rationale": rationale,
+            "next_hypothesis": next_hypothesis,
+        }
+    except Exception as exc:
+        print(f"[agent.py warning] Action planner failed. Using fallback. Reason: {exc}")
+        return heuristic_fallback
+
+
 def generate_synthesis_recommendation(candidate: dict) -> str:
     """Return a short, realistic synthesis route for the winning candidate."""
     prompt = synthesis_recommendation_prompt(candidate or {})
@@ -915,14 +1220,103 @@ def generate_lab_ready_portfolio(candidates: list[dict], spec: dict, memory: dic
         }
         return mapping.get(material_class, "class-relevant stable compound families")
 
-    def _honest_no_candidate_payload(material_class: str) -> dict:
-        note = f"No high-confidence candidate found; broaden search to {_broaden_families_hint(material_class)}."
+    def _honest_no_candidate_payload(material_class: str, observed_candidates: list[dict] | None = None) -> dict:
+        target_props = dict((spec or {}).get("target_props", {}) or {})
+        banned = list((spec or {}).get("banned_elements", []) or [])
+        reason = (
+            f"No high-confidence candidate found for material class '{material_class}'. "
+            f"Observed options either scored too low, failed post-check relevance, or remained too uncertain. "
+            f"Suggested broadened search families: {_broaden_families_hint(material_class)}."
+        )
+
+        observed = [dict(item) for item in (observed_candidates or []) if isinstance(item, dict)]
+        if observed:
+            entries: list[dict] = []
+            for idx, item in enumerate(observed[:3], start=1):
+                formula = str(item.get("formula", item.get("candidate", f"Observed-{idx}")) or f"Observed-{idx}")
+                family = str(item.get("material_family", item.get("family", "Unknown")) or "Unknown")
+                overall = int(item.get("score", item.get("overall_score", 0)) or 0)
+                stability = item.get("stability_above_hull")
+                stability_text = "unknown"
+                try:
+                    if stability is not None:
+                        stability_text = f"{float(stability):.3f} eV/atom"
+                except (TypeError, ValueError):
+                    stability_text = "unknown"
+                supply_risk = item.get("supply_chain_risk")
+                supply_text = "unknown"
+                try:
+                    if supply_risk is not None:
+                        supply_text = f"{int(float(supply_risk))}%"
+                except (TypeError, ValueError):
+                    supply_text = "unknown"
+
+                entries.append(
+                    {
+                        "rank": idx,
+                        "candidate": formula,
+                        "formula": formula,
+                        "family": family,
+                        "material_family": family,
+                        "scores": {
+                            "scientific_fit": max(0, min(100, overall)),
+                            "stability": max(0, min(100, int(item.get("stability_score", 0) or 0))),
+                            "supply_chain_safety": max(0, min(100, 100 - int(float(supply_risk or 100)))),
+                            "manufacturability": max(0, min(100, int(item.get("manufacturability_score", 0) or 0))),
+                            "evidence_confidence": max(0, min(100, int(item.get("evidence_confidence_score", 0) or 0))),
+                            "overall": overall,
+                        },
+                        "overall_score": overall,
+                        "scientific_fit_score": max(0, min(100, overall)),
+                        "stability_score": max(0, min(100, int(item.get("stability_score", 0) or 0))),
+                        "supply_chain_score": max(0, min(100, 100 - int(float(supply_risk or 100)))),
+                        "manufacturability_score": max(0, min(100, int(item.get("manufacturability_score", 0) or 0))),
+                        "evidence_confidence": max(0, min(100, int(item.get("evidence_confidence_score", 0) or 0))),
+                        "main_uncertainty": (
+                            f"Confidence remains low for deployment; stability={stability_text}, supply_chain_risk={supply_text}."
+                        ),
+                        "likely_failure_mode": (
+                            "Insufficient confidence margin for TEST_FIRST selection under current hard constraints."
+                        ),
+                        "recommended_experiment": _class_default_experiment(material_class),
+                        "rationale": (
+                            "Returned as best observed option from retrieval, but not promoted because confidence/fit was insufficient."
+                        ),
+                        "status": "EXPLORE_LATER",
+                        "eligible": bool(item.get("eligible", True)),
+                        "mp_id": item.get("mp_id"),
+                        "elements": item.get("elements"),
+                        "band_gap": item.get("band_gap"),
+                        "stability_above_hull": item.get("stability_above_hull"),
+                        "supply_chain_risk": item.get("supply_chain_risk"),
+                    }
+                )
+
+            test_queue = [
+                f"{idx}. {entry['recommended_experiment']}"
+                for idx, entry in enumerate(entries, start=1)
+            ]
+            return {
+                "portfolio": entries,
+                "test_queue": test_queue,
+                "provenance_tree": {
+                    "source": "criticalmat_agent_postcheck",
+                    "notes": reason,
+                    "constraints_snapshot": {
+                        "material_class": material_class,
+                        "exclude_radioactive": bool(target_props.get("exclude_radioactive", True)),
+                        "require_solid_state": bool(target_props.get("require_solid_state", True)),
+                        "banned_elements_sample": banned[:12],
+                    },
+                },
+            }
+
         return {
             "portfolio": [
                 {
                     "rank": 1,
-                    "candidate": note,
-                    "formula": note,
+                    "candidate": "No candidate selected",
+                    "formula": "No candidate selected",
                     "family": "N/A",
                     "material_family": "N/A",
                     "scores": {
@@ -939,16 +1333,25 @@ def generate_lab_ready_portfolio(candidates: list[dict], spec: dict, memory: dic
                     "supply_chain_score": 0,
                     "manufacturability_score": 0,
                     "evidence_confidence": 0,
-                    "main_uncertainty": "No plausible class-relevant candidate in current shortlist.",
-                    "likely_failure_mode": "Forced ranking would produce scientifically irrelevant recommendations.",
+                    "main_uncertainty": "No plausible class-relevant candidate was returned from retrieval after constraints.",
+                    "likely_failure_mode": "Search space was too narrow or constraints were too strict for current data.",
                     "recommended_experiment": _class_default_experiment(material_class),
-                    "rationale": note,
+                    "rationale": reason,
                     "status": "EXPLORE_LATER",
                     "eligible": True,
                 }
             ],
             "test_queue": [f"1. {_class_default_experiment(material_class)}"],
-            "provenance_tree": {"source": "criticalmat_agent_postcheck", "notes": note},
+            "provenance_tree": {
+                "source": "criticalmat_agent_postcheck",
+                "notes": reason,
+                "constraints_snapshot": {
+                    "material_class": material_class,
+                    "exclude_radioactive": bool(target_props.get("exclude_radioactive", True)),
+                    "require_solid_state": bool(target_props.get("require_solid_state", True)),
+                    "banned_elements_sample": banned[:12],
+                },
+            },
         }
 
     material_class = _material_class()
@@ -1111,7 +1514,7 @@ def generate_lab_ready_portfolio(candidates: list[dict], spec: dict, memory: dic
 
     normalized = [entry for entry in normalized if bool(entry.get("eligible", True))]
     if not normalized:
-        return _honest_no_candidate_payload(material_class)
+        return _honest_no_candidate_payload(material_class, observed_candidates=top)
 
     normalized.sort(
         key=lambda row: row["scores"].get("overall", 0),
@@ -1119,7 +1522,7 @@ def generate_lab_ready_portfolio(candidates: list[dict], spec: dict, memory: dic
     )
 
     if not _is_class_relevant(normalized[0], material_class):
-        return _honest_no_candidate_payload(material_class)
+        return _honest_no_candidate_payload(material_class, observed_candidates=top)
 
     normalized = normalized[:5]
     if len(normalized) >= 3:
